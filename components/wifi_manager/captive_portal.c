@@ -234,8 +234,7 @@ static void url_decode(const char *src, char *dst, size_t dst_len)
 
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Serving root page to client from %s", 
-             req->client_info ? inet_ntoa(((struct sockaddr_in*)req->client_info)->sin_addr) : "unknown");
+    ESP_LOGI(TAG, "Serving root page");
     
     size_t html_len = index_html_end - index_html_start;
     
@@ -426,7 +425,9 @@ static esp_err_t captive_portal_detection_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "Captive portal detection: %s", req->uri);
     
     // Get user agent for device-specific responses
-    const char* user_agent = httpd_req_get_hdr_value_str(req, "User-Agent");
+    char user_agent[128];
+    esp_err_t ret = httpd_req_get_hdr_value_str(req, "User-Agent", user_agent, sizeof(user_agent));
+    const char* user_agent_ptr = (ret == ESP_OK) ? user_agent : NULL;
     
     // Add headers to prevent caching
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
@@ -434,20 +435,20 @@ static esp_err_t captive_portal_detection_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Expires", "0");
     
     // Device-specific responses
-    if (is_apple_device(user_agent)) {
+    if (is_apple_device(user_agent_ptr)) {
         ESP_LOGD(TAG, "Apple device detected, sending success page");
         const char *response = "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
         httpd_resp_set_type(req, "text/html");
         httpd_resp_send(req, response, strlen(response));
         return ESP_OK;
     }
-    else if (is_android_device(user_agent)) {
+    else if (is_android_device(user_agent_ptr)) {
         ESP_LOGD(TAG, "Android device detected, sending 204");
         httpd_resp_set_status(req, "204 No Content");
         httpd_resp_send(req, NULL, 0);
         return ESP_OK;
     }
-    else if (is_windows_device(user_agent)) {
+    else if (is_windows_device(user_agent_ptr)) {
         ESP_LOGD(TAG, "Windows device detected, sending 204");
         httpd_resp_set_status(req, "204 No Content");
         httpd_resp_send(req, NULL, 0);
@@ -640,7 +641,7 @@ void captive_portal_start(void)
     // Start HTTP server
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    config.max_uri_handlers = 30;  // Increased for all handlers
+    config.max_uri_handlers = 80;  // Increased from 30 to 80 to accommodate all handlers
     config.stack_size = 8192;
     config.server_port = 80;
     config.recv_wait_timeout = 5;
@@ -712,7 +713,7 @@ void captive_portal_stop(void)
 
 void captive_portal_handle(void)
 {
-    // Nothing needed
+    // Nothing to do here
 }
 
 bool captive_portal_is_running(void)

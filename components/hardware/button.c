@@ -12,7 +12,7 @@ static int button_gpio = -1;
 static button_callback_t user_callback = NULL;
 static TaskHandle_t button_task_handle = NULL;
 
-// Debounce and timing constants (matching original)
+// Debounce and timing constants 
 #define DEBOUNCE_DELAY_MS    50
 #define SHORT_PRESS_MAX_MS   1000
 #define LONG_PRESS_MS        4000

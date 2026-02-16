@@ -12,7 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "esp_sntp.h"  // Only this SNTP header - NOT lwip/apps/sntp.h
+#include "esp_sntp.h"  
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>
@@ -457,7 +457,7 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
         shadow_state.last_wake_up_time = time(NULL);
     }
     
-    // Build shadow update JSON (exact match with original)
+    // Build shadow update JSON 
     cJSON *root = cJSON_CreateObject();
     cJSON *state = cJSON_AddObjectToObject(root, "state");
     cJSON *reported = cJSON_AddObjectToObject(state, "reported");

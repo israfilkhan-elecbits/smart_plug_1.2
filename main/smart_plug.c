@@ -47,7 +47,7 @@ static const char *TAG = "SMART_PLUG";
 #define PIN_SPI_SCK     CONFIG_SPI_SCK_PIN
 #define SPI_SPEED_HZ    CONFIG_SPI_SPEED_HZ
 
-// Calibration - EXACT values from Kconfig (converted from integers)
+// Calibration 
 #define VOLTAGE_COEFF   (CONFIG_VOLTAGE_COEFFICIENT_INT / 1000000.0f)
 #define CURRENT_COEFF   (CONFIG_CURRENT_COEFFICIENT_INT / 1000000.0f)
 #define POWER_COEFF     (CONFIG_POWER_COEFFICIENT_INT / 1000000.0f)
@@ -61,7 +61,7 @@ static const char *TAG = "SMART_PLUG";
 #define NVS_NS_METER    CONFIG_NVS_NS_METER_DATA
 
 /*===============================================================================
-  Data Structures - EXACT match with original
+  Data Structures 
   ===============================================================================*/
 
 typedef struct {
@@ -358,20 +358,20 @@ static void calculate_measurements(void)
 {
     if (!measurement_valid) return;
     
-    // Voltage - EXACT formula from original
+    // Voltage 
     meas.voltage_rms = (float)meas.avg_raw_voltage_rms * 
                        cal.voltage_coefficient / 1000000.0f;
     
-    // Current - EXACT formula from original
+    // Current 
     meas.current_rms = (float)meas.avg_raw_current_rms * 
                        cal.current_coefficient / 1000000.0f;
     
-    // Low current offset - EXACT from original
+    // Low current offset
     if (meas.current_rms < 0.5f) {
         meas.current_rms += cal.current_offset;
     }
     
-    // Power - EXACT from original
+    // Power 
     float raw_power = fabsf((float)meas.avg_raw_active_power);
     meas.active_power = raw_power * cal.power_coefficient / 1000.0f;
     

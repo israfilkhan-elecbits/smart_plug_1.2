@@ -1,4 +1,5 @@
 // smart_plug/components/hardware/relay.c
+
 #include "relay.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
