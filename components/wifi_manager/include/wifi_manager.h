@@ -20,8 +20,6 @@ typedef enum {
     WIFI_STATUS_SETUP_MODE,
 } wifi_status_t;
 
-// REMOVED: wifi_config_t structure - this conflicts with ESP-IDF
-
 /**
  * @brief Initialize WiFi manager
  * 

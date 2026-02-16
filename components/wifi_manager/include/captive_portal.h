@@ -20,11 +20,6 @@ void captive_portal_start(void);
 void captive_portal_stop(void);
 
 /**
- * @brief Handle captive portal clients (call periodically)
- */
-void captive_portal_handle(void);
-
-/**
  * @brief Check if captive portal is running
  * 
  * @return true if running

@@ -6,25 +6,16 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
-#include "esp_mac.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#include "freertos/task.h"
 #include <string.h>
-
-// Define MACSTR as fallback if not defined
-#ifndef MACSTR
-#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
-#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
-#endif
 
 static const char *TAG = "WIFI_MGR";
 
 /* FreeRTOS event group for WiFi events */
 #define WIFI_CONNECTED_BIT    BIT0
 #define WIFI_FAIL_BIT         BIT1
-#define WIFI_SETUP_BIT        BIT2
 
 static EventGroupHandle_t wifi_event_group = NULL;
 static wifi_status_t current_status = WIFI_STATUS_DISCONNECTED;
@@ -33,7 +24,6 @@ static char current_ssid[32] = "";
 static int current_rssi = 0;
 static bool setup_mode = false;
 static bool auto_reconnect = true;
-static uint32_t connection_timeout = 30000; // 30 seconds
 static void (*led_callback)(bool state) = NULL;
 
 /* NVS namespace for WiFi credentials */
@@ -46,15 +36,14 @@ static char saved_password[64] = "";
 /* Forward declarations */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data);
+static void load_credentials_from_nvs(void);
 
 bool wifi_manager_init(void)
 {
     ESP_LOGI(TAG, "Initializing WiFi manager");
     
-    // Create event group if not already created
-    if (wifi_event_group == NULL) {
-        wifi_event_group = xEventGroupCreate();
-    }
+    // Create event group
+    wifi_event_group = xEventGroupCreate();
     
     // Initialize TCP/IP network interface
     esp_netif_init();
@@ -69,16 +58,10 @@ bool wifi_manager_init(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     
     // Register event handlers
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                               &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                               &wifi_event_handler, NULL));
     
     // Set WiFi to station mode by default
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -93,7 +76,6 @@ static void load_credentials_from_nvs(void)
     nvs_handle_t nvs;
     esp_err_t err;
     
-    // Clear existing
     saved_ssid[0] = '\0';
     saved_password[0] = '\0';
     
@@ -104,16 +86,10 @@ static void load_credentials_from_nvs(void)
     }
     
     size_t len = sizeof(saved_ssid);
-    err = nvs_get_str(nvs, "ssid", saved_ssid, &len);
-    if (err != ESP_OK) {
-        ESP_LOGD(TAG, "No SSID found in NVS");
-    }
+    nvs_get_str(nvs, "ssid", saved_ssid, &len);
     
     len = sizeof(saved_password);
-    err = nvs_get_str(nvs, "password", saved_password, &len);
-    if (err != ESP_OK) {
-        ESP_LOGD(TAG, "No password found in NVS");
-    }
+    nvs_get_str(nvs, "password", saved_password, &len);
     
     nvs_close(nvs);
     
@@ -129,34 +105,15 @@ bool wifi_manager_save_credentials(const char *ssid, const char *password)
     
     err = nvs_open(NVS_NS_WIFI, NVS_READWRITE, &nvs);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to open NVS");
         return false;
     }
     
-    err = nvs_set_str(nvs, "ssid", ssid);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save SSID: %s", esp_err_to_name(err));
-        nvs_close(nvs);
-        return false;
-    }
-    
-    err = nvs_set_str(nvs, "password", password);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save password: %s", esp_err_to_name(err));
-        nvs_close(nvs);
-        return false;
-    }
-    
-    err = nvs_commit(nvs);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(err));
-        nvs_close(nvs);
-        return false;
-    }
-    
+    nvs_set_str(nvs, "ssid", ssid);
+    nvs_set_str(nvs, "password", password);
+    nvs_commit(nvs);
     nvs_close(nvs);
     
-    // Update local copy
     strlcpy(saved_ssid, ssid, sizeof(saved_ssid));
     strlcpy(saved_password, password, sizeof(saved_password));
     
@@ -171,7 +128,7 @@ bool wifi_manager_reset_credentials(void)
     
     err = nvs_open(NVS_NS_WIFI, NVS_READWRITE, &nvs);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to open NVS");
         return false;
     }
     
@@ -180,7 +137,6 @@ bool wifi_manager_reset_credentials(void)
     nvs_commit(nvs);
     nvs_close(nvs);
     
-    // Clear local copy
     saved_ssid[0] = '\0';
     saved_password[0] = '\0';
     
@@ -190,7 +146,6 @@ bool wifi_manager_reset_credentials(void)
 
 bool wifi_manager_connect_saved(void)
 {
-    // Load credentials from NVS
     load_credentials_from_nvs();
     
     if (strlen(saved_ssid) == 0) {
@@ -209,7 +164,6 @@ bool wifi_manager_connect_saved(void)
     strlcpy((char *)wifi_config.sta.ssid, saved_ssid, sizeof(wifi_config.sta.ssid));
     strlcpy((char *)wifi_config.sta.password, saved_password, sizeof(wifi_config.sta.password));
     
-    // Clear event group bits
     xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -218,23 +172,18 @@ bool wifi_manager_connect_saved(void)
     
     current_status = WIFI_STATUS_CONNECTING;
     
-    // Wait for connection or timeout
+    // Wait for connection (30 second timeout)
     EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                          pdFALSE,
-                                          pdFALSE,
-                                          pdMS_TO_TICKS(connection_timeout));
+                                          pdFALSE, pdFALSE,
+                                          pdMS_TO_TICKS(30000));
     
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to %s", saved_ssid);
         current_status = WIFI_STATUS_CONNECTED;
         return true;
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "Failed to connect to %s", saved_ssid);
-        current_status = WIFI_STATUS_CONNECTION_FAILED;
-        return false;
     } else {
-        ESP_LOGE(TAG, "Connection timeout");
+        ESP_LOGE(TAG, "Failed to connect to %s", saved_ssid);
         current_status = WIFI_STATUS_CONNECTION_FAILED;
         return false;
     }
@@ -242,12 +191,10 @@ bool wifi_manager_connect_saved(void)
 
 bool wifi_manager_start(void)
 {
-    // Try to connect with saved credentials
     if (wifi_manager_connect_saved()) {
         return true;
     }
     
-    // If no saved credentials or connection failed, start captive portal
     ESP_LOGI(TAG, "Starting captive portal for setup");
     wifi_manager_start_captive_portal();
     return true;
@@ -268,13 +215,12 @@ void wifi_manager_handle(void)
     uint32_t now = esp_timer_get_time() / 1000;
     
     if (setup_mode) {
-        captive_portal_handle();
         return;
     }
     
     // Auto-reconnect logic
     if (auto_reconnect && current_status == WIFI_STATUS_DISCONNECTED) {
-        if (now - last_reconnect > 30000) { // Try every 30 seconds
+        if (now - last_reconnect > 30000) {
             last_reconnect = now;
             if (strlen(saved_ssid) > 0) {
                 ESP_LOGI(TAG, "Auto-reconnecting...");
@@ -289,10 +235,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 {
     static int retry_count = 0;
     
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "WiFi STA started");
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (current_status == WIFI_STATUS_CONNECTED) {
             ESP_LOGI(TAG, "WiFi disconnected");
             current_status = WIFI_STATUS_DISCONNECTED;
@@ -331,10 +274,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP started");
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *)event_data;
-        ESP_LOGI(TAG, "Station connected to AP: MAC: " MACSTR, MAC2STR(event->mac));
     }
 }
 
@@ -387,8 +326,14 @@ void wifi_manager_start_captive_portal(void)
     setup_mode = true;
     current_status = WIFI_STATUS_SETUP_MODE;
     
-    // Stop station mode
+    // Stop current WiFi
     esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Set to APSTA mode (both AP and STA) so scanning works
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    vTaskDelay(pdMS_TO_TICKS(500));
     
     // Start captive portal
     captive_portal_start();
@@ -401,14 +346,11 @@ void wifi_manager_stop_captive_portal(void)
     ESP_LOGI(TAG, "Stopping captive portal");
     setup_mode = false;
     
-    // Stop captive portal
     captive_portal_stop();
     
-    // Restart station mode
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
     
-    // Try to connect
     if (strlen(saved_ssid) > 0) {
         wifi_manager_connect_saved();
     }
