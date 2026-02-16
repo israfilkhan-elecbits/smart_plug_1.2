@@ -536,6 +536,13 @@ static void mqtt_relay_callback(bool state)
 {
     ESP_LOGI(TAG, "MQTT relay command: %s", state ? "ON" : "OFF");
     relay_set(state);
+    
+    // Update shadow immediately
+    if (mqtt_manager_is_connected()) {
+        mqtt_manager_update_shadow(meas.voltage_rms, meas.current_rms,
+                                   meas.active_power, cumulative_energy,
+                                   meas.temperature, state);
+    }
 }
 
 static void mqtt_energy_reset_callback(void)
@@ -544,11 +551,19 @@ static void mqtt_energy_reset_callback(void)
     cumulative_energy = 0.0f;
     meas.energy_wh = 0.0f;
     save_energy_to_nvs();
+    
+    // Update shadow
+    if (mqtt_manager_is_connected()) {
+        mqtt_manager_update_shadow(meas.voltage_rms, meas.current_rms,
+                                   meas.active_power, cumulative_energy,
+                                   meas.temperature, relay_get_state());
+    }
 }
 
 static void mqtt_shadow_callback(const shadow_state_t *state)
 {
     ESP_LOGD(TAG, "Shadow updated");
+    // Handle any shadow synchronization if needed
 }
 
 /*===============================================================================
@@ -666,6 +681,9 @@ static void mqtt_task(void *pvParameters)
     TickType_t last_wake = xTaskGetTickCount();
     const TickType_t interval = pdMS_TO_TICKS(100);
     
+    // Wait for WiFi to be fully connected before first MQTT attempt
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
     while (1) {
         vTaskDelayUntil(&last_wake, interval);
         
@@ -693,6 +711,7 @@ static void mqtt_task(void *pvParameters)
         button_task_handler();
     }
 }
+
 
 /*===============================================================================
   Main Application
@@ -787,9 +806,29 @@ void app_main(void)
     mqtt_manager_set_energy_reset_callback(mqtt_energy_reset_callback);
     mqtt_manager_set_shadow_update_callback(mqtt_shadow_callback);
     
+    // Start MQTT if WiFi is connected and not in setup mode
     if (wifi_manager_is_connected() && !wifi_manager_is_setup_mode()) {
-        mqtt_manager_start();
-        mqtt_manager_connect();
+        ESP_LOGI(TAG, "WiFi connected, waiting for network stability...");
+        vTaskDelay(pdMS_TO_TICKS(3000));  // 3 second delay for network stability
+        
+        if (mqtt_manager_start()) {
+            ESP_LOGI(TAG, "MQTT manager started");
+            
+            // Give MQTT client time to initialize
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            if (!mqtt_manager_connect()) {
+                ESP_LOGW(TAG, "MQTT connection attempt failed, will retry in background");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to start MQTT manager");
+        }
+    } else {
+        if (wifi_manager_is_setup_mode()) {
+            ESP_LOGI(TAG, "In setup mode, MQTT not started");
+        } else {
+            ESP_LOGW(TAG, "WiFi not connected, MQTT will start when WiFi connects");
+        }
     }
     
     // Start LED task

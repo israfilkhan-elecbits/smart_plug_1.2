@@ -36,7 +36,7 @@ static const char *TAG = "MQTT_MGR";
 #endif
 
 /*===============================================================================
-  Topics - EXACT match with original
+  Topics
   ===============================================================================*/
 
 #define TOPIC_SHADOW_UPDATE     "$aws/things/" CONFIG_THING_NAME "/shadow/update"
@@ -68,9 +68,40 @@ static uint32_t reconnect_attempts = 0;
 static uint32_t last_reconnect_attempt = 0;
 #define RECONNECT_INTERVAL_MS 5000
 
-// LWT message (exact match with original)
+// LWT message
 #define LWT_MESSAGE_DISCONNECTED "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"false\"}}}}"
 #define LWT_MESSAGE_CONNECTED    "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"true\"}}}}"
+
+/*===============================================================================
+  Certificate Verification Helper
+  ===============================================================================*/
+
+static void verify_certificates(void)
+{
+    ESP_LOGI(TAG, "Certificate verification:");
+    ESP_LOGI(TAG, "CA Cert length: %d", aws_cert_ca_len);
+    ESP_LOGI(TAG, "Device Cert length: %d", aws_cert_crt_len);
+    ESP_LOGI(TAG, "Private Key length: %d", aws_cert_private_len);
+    
+    // Check if certificates start with valid PEM markers
+    if (strncmp(aws_cert_ca, "-----BEGIN CERTIFICATE-----", 27) == 0) {
+        ESP_LOGI(TAG, "CA Cert format: OK");
+    } else {
+        ESP_LOGE(TAG, "CA Cert format: INVALID");
+    }
+    
+    if (strncmp(aws_cert_crt, "-----BEGIN CERTIFICATE-----", 27) == 0) {
+        ESP_LOGI(TAG, "Device Cert format: OK");
+    } else {
+        ESP_LOGE(TAG, "Device Cert format: INVALID");
+    }
+    
+    if (strncmp(aws_cert_private, "-----BEGIN RSA PRIVATE KEY-----", 31) == 0) {
+        ESP_LOGI(TAG, "Private Key format: OK");
+    } else {
+        ESP_LOGE(TAG, "Private Key format: INVALID");
+    }
+}
 
 /*===============================================================================
   Time Synchronization
@@ -92,7 +123,7 @@ bool mqtt_manager_sync_time(void)
     
     ESP_LOGI(TAG, "Synchronizing time via NTP...");
     
-    // Initialize SNTP - using ESP-IDF v5.5.2 API
+    // Initialize SNTP
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_setservername(1, "time.nist.gov");
@@ -282,34 +313,37 @@ bool mqtt_manager_start(void)
     
     ESP_LOGI(TAG, "Starting MQTT manager");
     
+    // Verify certificates before proceeding
+    verify_certificates();
+    
     // Sync time first
     if (!mqtt_manager_sync_time()) {
         ESP_LOGW(TAG, "Time sync failed, continuing anyway");
     }
     
-    // Generate client ID with random suffix (same as original)
+    // Generate client ID with random suffix
     char client_id[64];
     uint32_t random_suffix = esp_random() & 0xFFFF;
     snprintf(client_id, sizeof(client_id), "%s_%04" PRIX32, CONFIG_THING_NAME, random_suffix);
     
-    // Configure MQTT with TLS - CORRECT FOR ESP-IDF v5.5.2
+    // CORRECT CONFIGURATION FOR ESP-IDF v5.5.2
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker = {
             .address = {
                 .uri = "mqtts://" CONFIG_AWS_IOT_ENDPOINT ":8883",
             },
             .verification = {
-                .use_global_ca_store = true,
+                .certificate = aws_cert_ca,        // CA Certificate goes here in verification
                 .skip_cert_common_name_check = false,
+                .use_global_ca_store = false,      // Don't use global store
             },
         },
         .credentials = {
-            .authentication = {
-                .certificate = aws_cert_crt,
-                .key = aws_cert_private,
-            },
             .client_id = client_id,
-            .set_null_client_id = false,
+            .authentication = {
+                .certificate = aws_cert_crt,        // Device certificate
+                .key = aws_cert_private,            // Private key
+            },
         },
         .session = {
             .keepalive = 15,
@@ -325,6 +359,9 @@ bool mqtt_manager_start(void)
         .buffer = {
             .size = 2048,
             .out_size = 2048,
+        },
+        .network = {
+            .timeout_ms = 10000,
         },
     };
     
@@ -363,6 +400,7 @@ bool mqtt_manager_connect(void)
         return false;
     }
     
+    // Check if already connected by checking status
     if (current_status == MQTT_CONNECTED) {
         return true;
     }
@@ -375,6 +413,10 @@ bool mqtt_manager_connect(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start MQTT client: %s", esp_err_to_name(err));
         current_status = MQTT_ERROR;
+        
+        // Destroy and recreate client on failure
+        esp_mqtt_client_destroy(mqtt_client);
+        mqtt_client = NULL;
         return false;
     }
     
@@ -403,6 +445,10 @@ void mqtt_manager_handle(void)
         if (now - last_reconnect_attempt > RECONNECT_INTERVAL_MS) {
             last_reconnect_attempt = now;
             if (wifi_manager_is_connected()) {
+                // Recreate client if it was destroyed
+                if (!mqtt_client) {
+                    mqtt_manager_start();
+                }
                 mqtt_manager_connect();
             }
         }
