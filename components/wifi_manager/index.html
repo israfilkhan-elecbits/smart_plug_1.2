@@ -1,0 +1,1051 @@
+<!-- smart_plug/components/wifi_manager/index.html -->
+ <script>
+    // Force captive portal detection
+    (function() {
+        // Check if we're on the captive portal IP
+        if (window.location.hostname !== '192.168.4.1') {
+            window.location.replace('http://192.168.4.1/');
+        }
+    })();
+</script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>Elecbits Smart Plug • Premium Edition</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --primary-blue: #3B82F6;
+            --blue-purple: #8B5CF6;
+            --soft-orange: #FB923C;
+            --calm-blue: #60A5FA;
+            --success-green: #10B981;
+            --bg-start: #667eea;
+            --bg-end: #764ba2;
+            --glass-white: rgba(255, 255, 255, 0.15);
+            --glass-border: rgba(255, 255, 255, 0.25);
+        }
+        
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-end) 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+            position: relative;
+            overflow: hidden;
+            max-width: 1000px;
+            max-height: 1875px;
+            margin: 0 auto;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(ellipse at 20% 30%, rgba(59, 130, 246, 0.4) 0%, transparent 40%),
+                radial-gradient(ellipse at 80% 70%, rgba(139, 92, 246, 0.35) 0%, transparent 40%),
+                radial-gradient(ellipse at 40% 80%, rgba(96, 165, 250, 0.3) 0%, transparent 35%);
+            animation: luxuryFloat 25s ease-in-out infinite;
+            pointer-events: none;
+        }
+        
+        @keyframes luxuryFloat {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); opacity: 0.6; }
+            33% { transform: translate(3%, -3%) rotate(2deg); opacity: 0.8; }
+            66% { transform: translate(-2%, 2%) rotate(-2deg); opacity: 0.7; }
+        }
+        
+        .smart-plug-container {
+            position: relative;
+            width: 100%;
+            max-width: 420px;
+            z-index: 1;
+            filter: drop-shadow(0 40px 80px rgba(0, 0, 0, 0.4));
+        }
+        
+        .smart-plug-body {
+            background: linear-gradient(135deg, 
+                rgba(255, 255, 255, 0.95) 0%, 
+                rgba(248, 250, 252, 0.95) 100%);
+            backdrop-filter: blur(40px) saturate(180%);
+            border-radius: 50px 50px 40px 40px;
+            box-shadow: 
+                0 60px 120px rgba(0, 0, 0, 0.35),
+                0 0 0 1px rgba(255, 255, 255, 0.6),
+                inset 0 1px 2px rgba(255, 255, 255, 0.9),
+                inset 0 -1px 2px rgba(0, 0, 0, 0.05);
+            position: relative;
+            overflow: hidden;
+            border: 1.5px solid rgba(255, 255, 255, 0.5);
+            min-height: 580px;
+            max-height: 650px;
+        }
+        
+        .smart-plug-body::before {
+            content: '';
+            position: absolute;
+            top: -100%;
+            left: -100%;
+            width: 300%;
+            height: 300%;
+            background: conic-gradient(from 0deg at 50% 50%,
+                transparent 0deg,
+                rgba(59, 130, 246, 0.06) 60deg,
+                transparent 120deg,
+                rgba(139, 92, 246, 0.06) 180deg,
+                transparent 240deg,
+                rgba(96, 165, 250, 0.06) 300deg,
+                transparent 360deg);
+            animation: diamondRotate 20s linear infinite;
+            pointer-events: none;
+        }
+        
+        @keyframes diamondRotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .smart-plug-body::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                var(--calm-blue) 25%,
+                var(--blue-purple) 50%,
+                var(--soft-orange) 75%,
+                transparent 100%);
+            opacity: 0.7;
+            animation: accentShine 4s ease-in-out infinite;
+        }
+        
+        @keyframes accentShine {
+            0%, 100% { opacity: 0.5; transform: scaleX(0.8); }
+            50% { opacity: 0.9; transform: scaleX(1); }
+        }
+        
+        .plug-prongs {
+            position: absolute;
+            bottom: -60px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 90px;
+            z-index: 5;
+        }
+        
+        .prong {
+            width: 36px;
+            height: 75px;
+            background: linear-gradient(180deg, 
+                #e0f2fe 0%,
+                var(--calm-blue) 15%, 
+                var(--primary-blue) 45%,
+                #93c5fd 85%,
+                #cbd5e1 100%);
+            border-radius: 10px 10px 5px 5px;
+            box-shadow: 
+                0 20px 50px rgba(59, 130, 246, 0.7),
+                0 0 60px rgba(59, 130, 246, 0.4),
+                inset 0 3px 10px rgba(255, 255, 255, 0.6),
+                inset 0 -5px 12px rgba(0, 0, 0, 0.25);
+            position: relative;
+            animation: prongGlow 4s ease-in-out infinite;
+        }
+        
+        @keyframes prongGlow {
+            0%, 100% {
+                box-shadow: 
+                    0 20px 50px rgba(59, 130, 246, 0.6),
+                    0 0 60px rgba(59, 130, 246, 0.3),
+                    inset 0 3px 10px rgba(255, 255, 255, 0.6),
+                    inset 0 -5px 12px rgba(0, 0, 0, 0.25);
+            }
+            50% {
+                box-shadow: 
+                    0 25px 60px rgba(59, 130, 246, 0.8),
+                    0 0 80px rgba(59, 130, 246, 0.5),
+                    inset 0 3px 10px rgba(255, 255, 255, 0.7),
+                    inset 0 -5px 12px rgba(0, 0, 0, 0.3);
+            }
+        }
+        
+        .prong::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 65%;
+            height: 4px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+            border-radius: 2px;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
+        }
+        
+        .prong::after {
+            content: '';
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 75%;
+            height: 3px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 2px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+        }
+        
+        .page {
+            display: none;
+            animation: premiumFadeIn 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .page.active {
+            display: block;
+        }
+        
+        @keyframes premiumFadeIn {
+            from { opacity: 0; transform: translateY(30px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        
+        .plug-header {
+            background: linear-gradient(135deg, 
+                var(--primary-blue) 0%, 
+                #5b7ef5 50%,
+                var(--blue-purple) 100%);
+            padding: 35px 30px 30px;
+            text-align: center;
+            position: relative;
+            border-radius: 50px 50px 0 0;
+            overflow: hidden;
+        }
+        
+        .plug-header::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image: 
+                radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.08) 0%, transparent 50%);
+            animation: patternFloat 15s ease-in-out infinite;
+        }
+        
+        @keyframes patternFloat {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+        
+        .setup-badge {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            background: linear-gradient(135deg, var(--soft-orange) 0%, #f97316 100%);
+            color: white;
+            padding: 8px 18px;
+            border-radius: 18px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            box-shadow: 
+                0 8px 20px rgba(251, 146, 60, 0.5),
+                inset 0 1px 2px rgba(255, 255, 255, 0.4);
+            animation: badgeGlow 3.5s ease-in-out infinite;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        @keyframes badgeGlow {
+            0%, 100% { box-shadow: 0 8px 20px rgba(251, 146, 60, 0.4); }
+            50% { box-shadow: 0 12px 30px rgba(251, 146, 60, 0.7); }
+        }
+        
+        .led-indicator {
+            width: 85px;
+            height: 85px;
+            margin: 0 auto 25px;
+            position: relative;
+            animation: premiumFloat 5s ease-in-out infinite;
+            filter: drop-shadow(0 12px 35px rgba(59, 130, 246, 0.4));
+        }
+        
+        @keyframes premiumFloat {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            33% { transform: translateY(-8px) rotate(2deg); }
+            66% { transform: translateY(-4px) rotate(-2deg); }
+        }
+        
+        .led-outer-ring {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: linear-gradient(135deg, 
+                rgba(59, 130, 246, 0.3) 0%,
+                rgba(96, 165, 250, 0.2) 100%);
+            border: 3px solid rgba(59, 130, 246, 0.5);
+            box-shadow: 
+                0 0 30px rgba(59, 130, 246, 0.5),
+                inset 0 2px 6px rgba(255, 255, 255, 0.3);
+            animation: ringPulse 3s ease-in-out infinite;
+        }
+        
+        @keyframes ringPulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 1;
+                border-color: rgba(59, 130, 246, 0.5);
+            }
+            50% {
+                transform: scale(1.06);
+                opacity: 0.8;
+                border-color: rgba(59, 130, 246, 0.7);
+            }
+        }
+        
+        .led-glow {
+            position: absolute;
+            inset: 14px;
+            border-radius: 50%;
+            background: radial-gradient(circle, 
+                rgba(224, 242, 254, 0.9) 0%,
+                rgba(147, 197, 253, 0.7) 30%,
+                rgba(59, 130, 246, 0.5) 60%,
+                rgba(59, 130, 246, 0.3) 80%,
+                transparent 100%);
+            box-shadow: 
+                0 0 40px rgba(96, 165, 250, 0.8),
+                0 0 80px rgba(59, 130, 246, 0.6),
+                inset 0 0 30px rgba(224, 242, 254, 0.6);
+            animation: ledGlow 3s ease-in-out infinite;
+        }
+        
+        @keyframes ledGlow {
+            0%, 100% {
+                box-shadow: 
+                    0 0 40px rgba(96, 165, 250, 0.7),
+                    0 0 80px rgba(59, 130, 246, 0.5),
+                    inset 0 0 30px rgba(224, 242, 254, 0.5);
+            }
+            50% {
+                box-shadow: 
+                    0 0 60px rgba(96, 165, 250, 1),
+                    0 0 120px rgba(59, 130, 246, 0.8),
+                    inset 0 0 40px rgba(224, 242, 254, 0.7);
+            }
+        }
+        
+        .led-core {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: radial-gradient(circle,
+                #ffffff 0%,
+                #f0f9ff 20%,
+                #dbeafe 40%,
+                var(--calm-blue) 70%,
+                var(--primary-blue) 100%);
+            box-shadow: 
+                0 0 20px rgba(255, 255, 255, 0.9),
+                0 0 40px rgba(224, 242, 254, 0.8),
+                0 0 60px rgba(96, 165, 250, 0.7),
+                inset 0 2px 8px rgba(255, 255, 255, 0.9),
+                inset 0 -2px 6px rgba(59, 130, 246, 0.6);
+            animation: coreShine 3s ease-in-out infinite;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+        }
+        
+        @keyframes coreShine {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.1); }
+        }
+        
+        .led-core::after {
+            content: '';
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: radial-gradient(circle, 
+                rgba(255, 255, 255, 0.95) 0%,
+                rgba(255, 255, 255, 0.4) 60%,
+                transparent 100%);
+            animation: reflectionShimmer 4s ease-in-out infinite;
+        }
+        
+        @keyframes reflectionShimmer {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 1; }
+        }
+        
+        .device-title {
+            font-family: 'Cinzel', serif;
+            font-size: 34px;
+            font-weight: 800;
+            color: white;
+            letter-spacing: 5px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            text-shadow: 
+                0 2px 12px rgba(0, 0, 0, 0.4),
+                0 0 30px rgba(255, 255, 255, 0.3);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .device-serial {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 9px;
+            color: rgba(255, 255, 255, 0.75);
+            letter-spacing: 2.5px;
+            font-weight: 500;
+            opacity: 0.9;
+        }
+        
+        .plug-content {
+            padding: 35px 30px 45px;
+            height: calc(100% - 180px);
+            overflow: hidden;
+        }
+        
+        .setup-form {
+            background: linear-gradient(135deg,
+                rgba(255, 255, 255, 0.7) 0%,
+                rgba(255, 255, 255, 0.5) 100%);
+            backdrop-filter: blur(20px);
+            border-radius: 28px;
+            padding: 35px 30px;
+            box-shadow: 
+                0 20px 50px rgba(0, 0, 0, 0.12),
+                0 0 0 1px rgba(255, 255, 255, 0.5),
+                inset 0 1px 2px rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            position: relative;
+            overflow: hidden;
+            height: 100%;
+        }
+        
+        .setup-form::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg,
+                transparent,
+                rgba(59, 130, 246, 0.3) 50%,
+                transparent);
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            color: #475569;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        
+        .form-input,
+        .form-select {
+            width: 100%;
+            padding: 16px 20px;
+            border: 2px solid rgba(226, 232, 240, 0.6);
+            border-radius: 18px;
+            font-size: 14px;
+            font-family: 'DM Sans', sans-serif;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #1e293b;
+            font-weight: 500;
+            box-shadow: 
+                0 3px 10px rgba(0, 0, 0, 0.05),
+                inset 0 1px 2px rgba(255, 255, 255, 0.9);
+        }
+        
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 18px center;
+            background-size: 16px;
+            background-color: rgba(255, 255, 255, 0.8);
+            cursor: pointer;
+            color: #64748b;
+            font-weight: 600;
+        }
+        
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 
+                0 0 0 4px rgba(59, 130, 246, 0.12),
+                0 6px 16px rgba(59, 130, 246, 0.15);
+            background: rgba(255, 255, 255, 0.95);
+            transform: translateY(-2px);
+        }
+        
+        .password-group {
+            position: relative;
+        }
+        
+        .password-toggle {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            font-size: 18px;
+            opacity: 0.6;
+            transition: all 0.3s;
+            user-select: none;
+            filter: grayscale(0.2);
+        }
+        
+        .password-toggle:hover {
+            opacity: 1;
+            transform: translateY(-50%) scale(1.1);
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 35px;
+        }
+        
+        .btn {
+            flex: 1;
+            padding: 16px 28px;
+            border: none;
+            border-radius: 18px;
+            font-size: 14px;
+            font-weight: 700;
+            font-family: 'DM Sans', sans-serif;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, 
+                transparent, 
+                rgba(255, 255, 255, 0.4), 
+                transparent);
+            transition: left 0.6s;
+        }
+        
+        .btn:hover::before {
+            left: 100%;
+        }
+        
+        .btn-cancel {
+            background: linear-gradient(135deg, 
+                rgba(255, 255, 255, 0.9) 0%,
+                rgba(254, 242, 242, 0.9) 100%);
+            color: #dc2626;
+            border: 2px solid #ef4444;
+            box-shadow: 0 6px 16px rgba(239, 68, 68, 0.15);
+        }
+        
+        .btn-cancel:hover {
+            background: linear-gradient(135deg, 
+                rgba(255, 255, 255, 1) 0%,
+                rgba(254, 242, 242, 1) 100%);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(239, 68, 68, 0.25);
+            border-color: #dc2626;
+        }
+        
+        .btn-connect {
+            background: linear-gradient(135deg, 
+                var(--primary-blue) 0%, 
+                var(--calm-blue) 100%);
+            color: white;
+            box-shadow: 
+                0 12px 30px rgba(59, 130, 246, 0.4),
+                inset 0 1px 2px rgba(255, 255, 255, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn-connect:hover {
+            transform: translateY(-3px);
+            box-shadow: 
+                0 16px 40px rgba(59, 130, 246, 0.5),
+                inset 0 1px 2px rgba(255, 255, 255, 0.4);
+            background: linear-gradient(135deg, 
+                #2563eb 0%, 
+                var(--primary-blue) 100%);
+        }
+        
+        .connecting-container {
+            text-align: center;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .connecting-title {
+            font-family: 'Cinzel', serif;
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(135deg, 
+                var(--primary-blue) 0%, 
+                var(--calm-blue) 50%,
+                var(--blue-purple) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            filter: drop-shadow(0 3px 10px rgba(59, 130, 246, 0.2));
+        }
+        
+        .network-display {
+            font-size: 18px;
+            color: #1e293b;
+            font-weight: 700;
+            margin-bottom: 30px;
+            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            border: 2px solid rgba(59, 130, 246, 0.2);
+            word-break: break-word;
+        }
+        
+        .progress-area {
+            max-width: 100%;
+            margin: 0 auto 30px;
+            background: linear-gradient(135deg,
+                rgba(255, 255, 255, 0.4) 0%,
+                rgba(255, 255, 255, 0.2) 100%);
+            backdrop-filter: blur(10px);
+            border-radius: 22px;
+            padding: 25px 20px;
+            box-shadow: 
+                0 12px 35px rgba(0, 0, 0, 0.08),
+                0 0 0 1px rgba(255, 255, 255, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+        
+        .spinner-container {
+            width: 130px;
+            height: 130px;
+            margin: 0 auto 25px;
+            position: relative;
+        }
+        
+        .spinner {
+            width: 100%;
+            height: 100%;
+            border: 8px solid rgba(224, 242, 254, 0.4);
+            border-radius: 50%;
+            position: relative;
+            box-shadow: 
+                inset 0 0 25px rgba(59, 130, 246, 0.1),
+                0 0 35px rgba(59, 130, 246, 0.1);
+        }
+        
+        .spinner::after {
+            content: '';
+            position: absolute;
+            inset: -8px;
+            border-radius: 50%;
+            border: 8px solid transparent;
+            border-top-color: var(--primary-blue);
+            border-right-color: var(--primary-blue);
+            animation: premiumSpin 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            filter: drop-shadow(0 0 16px rgba(59, 130, 246, 0.6));
+        }
+        
+        @keyframes premiumSpin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .countdown-text {
+            font-size: 15px;
+            color: #64748b;
+            margin-bottom: 15px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        .countdown-number {
+            font-family: 'Cinzel', serif;
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--primary-blue);
+            letter-spacing: 1.5px;
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(224, 242, 254, 0.5);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 25px;
+            box-shadow: 
+                inset 0 2px 5px rgba(0, 0, 0, 0.12),
+                0 0 0 1px rgba(255, 255, 255, 0.5);
+            border: 1px solid rgba(226, 232, 240, 0.4);
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, 
+                var(--primary-blue) 0%, 
+                var(--calm-blue) 50%,
+                var(--success-green) 100%);
+            border-radius: 10px;
+            width: 0%;
+            animation: progressAnimation 3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            box-shadow: 
+                0 0 16px rgba(59, 130, 246, 0.6),
+                inset 0 1px 2px rgba(255, 255, 255, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg,
+                transparent,
+                rgba(255, 255, 255, 0.6),
+                transparent);
+            animation: progressShine 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes progressShine {
+            0% { left: -50%; }
+            100% { left: 150%; }
+        }
+        
+        @keyframes progressAnimation {
+            to { width: 100%; }
+        }
+        
+        .status-message {
+            font-size: 14px;
+            color: #64748b;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-top: 15px;
+        }
+        
+        @media (max-width: 540px) {
+            .smart-plug-container {
+                max-width: 100%;
+            }
+            
+            .smart-plug-body {
+                border-radius: 40px 40px 30px 30px;
+                min-height: 520px;
+                max-height: 580px;
+            }
+            
+            .plug-header {
+                padding: 25px 20px 20px;
+                border-radius: 40px 40px 0 0;
+            }
+            
+            .device-title {
+                font-size: 28px;
+                letter-spacing: 3px;
+            }
+            
+            .led-indicator {
+                width: 70px;
+                height: 70px;
+                margin-bottom: 20px;
+            }
+            
+            .led-core {
+                width: 32px;
+                height: 32px;
+            }
+            
+            .setup-badge {
+                padding: 6px 14px;
+                font-size: 8px;
+                top: 15px;
+                right: 15px;
+            }
+            
+            .plug-content {
+                padding: 25px 20px 35px;
+            }
+            
+            .setup-form {
+                padding: 25px 20px;
+                border-radius: 22px;
+            }
+            
+            .connecting-title {
+                font-size: 26px;
+                letter-spacing: 3px;
+            }
+            
+            .network-display {
+                font-size: 16px;
+                padding: 10px 15px;
+            }
+            
+            .spinner-container {
+                width: 110px;
+                height: 110px;
+            }
+            
+            .plug-prongs {
+                gap: 70px;
+                bottom: -50px;
+            }
+            
+            .prong {
+                width: 32px;
+                height: 65px;
+            }
+        }
+    </style>
+    <link href='https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=DM+Sans:wght@300;400;500;600;700&display=swap' rel='stylesheet'>
+</head>
+<body>
+    <div class='smart-plug-container'>
+        <div class='smart-plug-body'>
+            <div class='page' id='setupPage'>
+                <div class='plug-header'>
+                    <div class='setup-badge'>⚡ SETUP MODE</div>
+                    
+                    <div class='led-indicator'>
+                        <div class='led-outer-ring'></div>
+                        <div class='led-glow'></div>
+                        <div class='led-core'></div>
+                    </div>
+                    
+                    <div class='device-title'>SMART PLUG</div>
+                    <div class='device-serial' id='deviceSerial'></div>
+                </div>
+                
+                <div class='plug-content'>
+                    <div class='setup-form'>
+                        <div class='form-group'>
+                            <label class='form-label'>Network Name</label>
+                            <select class='form-select' id='networkSelect'>
+                                <option value=''>Select network</option>
+                            </select>
+                        </div>
+                        
+                        <div class='form-group'>
+                            <label class='form-label'>Password</label>
+                            <div class='password-group'>
+                                <input type='password' class='form-input' id='passwordInput' placeholder='Enter password'>
+                                <span class='password-toggle' onclick='togglePassword()'>👁️</span>
+                            </div>
+                        </div>
+                        
+                        <div class='form-actions'>
+                            <button class='btn btn-cancel' onclick='window.location.href="/reset"'>Reset</button>
+                            <button class='btn btn-connect' onclick='connect()'>Connect</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class='plug-prongs'>
+            <div class='prong'></div>
+            <div class='prong'></div>
+        </div>
+    </div>
+
+    <script>
+        // Get device serial (MAC address)
+        fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('deviceSerial').textContent = 'SN: ' + data.mac;
+            });
+        
+        function togglePassword() {
+            const passwordInput = document.getElementById('passwordInput');
+            const toggle = document.querySelector('.password-toggle');
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggle.textContent = '🙈';
+            } else {
+                passwordInput.type = 'password';
+                toggle.textContent = '👁️';
+            }
+        }
+        
+        function scanNetworks() {
+            const select = document.getElementById('networkSelect');
+            select.innerHTML = '<option value="">Scanning...</option>';
+            
+            fetch('/scan')
+                .then(response => response.json())
+                .then(networks => {
+                    select.innerHTML = '<option value="">Select network</option>';
+                    networks.sort((a, b) => b.rssi - a.rssi);
+                    networks.forEach(network => {
+                        const option = document.createElement('option');
+                        option.value = network.ssid;
+                        
+                        // Add signal strength indicator
+                        let signal = '';
+                        if (network.rssi > -50) signal = '📶';
+                        else if (network.rssi > -60) signal = '📶📶';
+                        else if (network.rssi > -70) signal = '📶📶📶';
+                        else signal = '📶📶📶📶';
+                        
+                        option.text = `${network.ssid} ${signal} (${network.rssi} dBm)`;
+                        select.appendChild(option);
+                    });
+                })
+                .catch(error => {
+                    select.innerHTML = '<option value="">Scan failed</option>';
+                });
+        }
+        
+        function connect() {
+            const ssid = document.getElementById('networkSelect').value;
+            const password = document.getElementById('passwordInput').value;
+            
+            if (!ssid) {
+                alert('Please select a network');
+                return;
+            }
+            
+            if (!password) {
+                alert('Please enter a password');
+                return;
+            }
+            
+            // Show connecting page
+            document.getElementById('setupPage').innerHTML = `
+                <div class='plug-header'>
+                    <div class='device-title'>SMART PLUG</div>
+                    <div class='device-serial' id='deviceSerial'></div>
+                </div>
+                
+                <div class='plug-content'>
+                    <div class='setup-form'>
+                        <div class='connecting-container'>
+                            <div class='connecting-title'>CONNECTING</div>
+                            <div class='network-display'>${escapeHtml(ssid)}</div>
+                            
+                            <div class='progress-area'>
+                                <div class='spinner-container'>
+                                    <div class='spinner'></div>
+                                </div>
+                                
+                                <div class='countdown-text'>
+                                    Restarting in <span class='countdown-number' id='countdownNum'>3</span> seconds...
+                                </div>
+                                
+                                <div class='progress-bar-container'>
+                                    <div class='progress-bar'></div>
+                                </div>
+                            </div>
+                            
+                            <div class='status-message'>Device will restart and connect to network</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Update serial
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('deviceSerial').textContent = 'SN: ' + data.mac;
+                });
+            
+            // Send connection request
+            const formData = new URLSearchParams();
+            formData.append('ssid', ssid);
+            formData.append('password', password);
+            
+            fetch('/connect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: formData.toString()
+            });
+            
+            // Countdown
+            let seconds = 3;
+            const countdownElement = document.getElementById('countdownNum');
+            const interval = setInterval(() => {
+                seconds--;
+                if (countdownElement) {
+                    countdownElement.textContent = seconds;
+                }
+                if (seconds <= 0) {
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+        
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        // Start scan on page load
+        window.onload = function() {
+            document.getElementById('setupPage').classList.add('active');
+            scanNetworks();
+        };
+    </script>
+</body>
+</html>

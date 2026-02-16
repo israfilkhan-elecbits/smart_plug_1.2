@@ -1,0 +1,225 @@
+# smart_plug/main/Kconfig.projbuild
+
+menu "Smart Plug Configuration"
+
+    config THING_NAME
+        string "AWS IoT Thing Name"
+        default "Smart_Plug_1"
+        help
+            Device name for AWS IoT shadow
+
+    config FIRMWARE_VERSION
+        string "Firmware Version"
+        default "1.2.0"
+        help
+            Firmware version string
+
+    config AWS_IOT_ENDPOINT
+        string "AWS IoT Endpoint"
+        default "a1lgz1948lk3nw-ats.iot.ap-south-1.amazonaws.com"
+        help
+            AWS IoT endpoint URL
+
+    menu "Timing Configuration"
+
+        config MEASUREMENT_INTERVAL_MS
+            int "Measurement Interval (ms)"
+            default 100
+            range 50 1000
+            help
+                Time between measurements (10Hz default)
+
+        config PUBLISH_INTERVAL_MS
+            int "Publish Interval (ms)"
+            default 1000
+            range 500 60000
+            help
+                Time between MQTT publishes
+
+        config WIFI_TIMEOUT_MS
+            int "WiFi Connection Timeout (ms)"
+            default 30000
+            range 5000 60000
+            help
+                Timeout for WiFi connection
+
+        config STORAGE_SAVE_INTERVAL_MS
+            int "Storage Save Interval (ms)"
+            default 300000
+            range 10000 3600000
+            help
+                Time between NVS saves
+
+        config OFFLINE_SAVE_INTERVAL_MS
+            int "Offline Save Interval (ms)"
+            default 60000
+            range 5000 3600000
+            help
+                Time between offline data saves
+
+        config DEBUG_INTERVAL_MS
+            int "Debug Print Interval (ms)"
+            default 10000
+            range 1000 60000
+            help
+                Time between debug prints
+
+        config LED_BLINK_INTERVAL_MS
+            int "LED Blink Interval (ms)"
+            default 500
+            range 100 5000
+            help
+                Blink rate for setup mode LED
+
+        config PRESS_COOLDOWN_MS
+            int "Button Press Cooldown (ms)"
+            default 500
+            range 200 5000
+            help
+                Minimum time between button presses
+
+    endmenu
+
+    menu "Hardware Pin Configuration"
+
+        config CS_PIN
+            int "SPI CS Pin"
+            default 12
+            range 0 39
+            help
+                GPIO for ADE9153A chip select
+
+        config RESET_PIN
+            int "Reset Pin"
+            default 19
+            range 0 39
+            help
+                GPIO for ADE9153A reset
+
+        config RELAY_PIN
+            int "Relay Control Pin"
+            default 33
+            range 0 39
+            help
+                GPIO for relay control
+
+        config STATUS_LED_PIN
+            int "Status LED Pin"
+            default 22
+            range 0 39
+            help
+                GPIO for status LED
+
+        config BUTTON_PIN
+            int "Button Pin"
+            default 23
+            range 0 39
+            help
+                GPIO for button input
+
+        config ZC_PIN
+            int "Zero Crossing Pin"
+            default 21
+            range 0 39
+            help
+                GPIO for zero crossing detection
+
+        config SPI_MOSI_PIN
+            int "SPI MOSI Pin"
+            default 27
+            range 0 39
+            help
+                GPIO for SPI MOSI
+
+        config SPI_MISO_PIN
+            int "SPI MISO Pin"
+            default 25
+            range 0 39
+            help
+                GPIO for SPI MISO
+
+        config SPI_SCK_PIN
+            int "SPI SCK Pin"
+            default 26
+            range 0 39
+            help
+                GPIO for SPI clock
+
+        config SPI_SPEED_HZ
+            int "SPI Speed (Hz)"
+            default 1000000
+            range 100000 10000000
+            help
+                SPI clock speed in Hz
+
+    endmenu
+
+    menu "Calibration Configuration"
+
+        config DEFAULT_AVERAGE_SAMPLES
+            int "Default Average Samples"
+            default 3
+            range 1 100
+            help
+                Number of samples for averaging
+
+        config VOLTAGE_COEFFICIENT_INT
+            int "Voltage Coefficient (microvolts per code)"
+            default 13006800
+            range 1000000 100000000
+            help
+                Voltage RMS coefficient in microvolts per code (actual value / 1000000)
+
+        config CURRENT_COEFFICIENT_INT
+            int "Current Coefficient (microamps per code)"
+            default 365032
+            range 10000 10000000
+            help
+                Current RMS coefficient in microamps per code (actual value / 1000000)
+
+        config POWER_COEFFICIENT_INT
+            int "Power Coefficient (microwatts per code)"
+            default 664987
+            range 10000 10000000
+            help
+                Power coefficient in microwatts per code (actual value / 1000000)
+
+        config ENERGY_COEFFICIENT_INT
+            int "Energy Coefficient (microwatt-hours per code)"
+            default 858307
+            range 10000 10000000
+            help
+                Energy coefficient in microwatt-hours per code (actual value / 1000000)
+
+        config CURRENT_OFFSET_INT
+            int "Current Offset (milliamps)"
+            default 19
+            range 0 1000
+            help
+                Current offset compensation in milliamps (actual value / 1000)
+
+    endmenu
+
+    menu "NVS Namespaces"
+
+        config NVS_NS_SYSTEM
+            string "System NVS Namespace"
+            default "system"
+            help
+                NVS namespace for system settings
+
+        config NVS_NS_WIFI
+            string "WiFi NVS Namespace"
+            default "wifi"
+            help
+                NVS namespace for WiFi credentials
+
+        config NVS_NS_METER_DATA
+            string "Meter Data NVS Namespace"
+            default "meter_data"
+            help
+                NVS namespace for meter data
+
+    endmenu
+
+endmenu
