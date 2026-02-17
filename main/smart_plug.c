@@ -13,6 +13,14 @@
 #include "driver/gpio.h"
 #include "cJSON.h"
 
+// Define HIGH/LOW for Arduino compatibility
+#ifndef LOW
+#define LOW 0
+#endif
+#ifndef HIGH
+#define HIGH 1
+#endif
+
 #include "ade9153a_api.h"
 #include "relay.h"
 #include "led.h"
@@ -47,21 +55,34 @@ static const char *TAG = "SMART_PLUG";
 #define PIN_SPI_SCK     CONFIG_SPI_SCK_PIN
 #define SPI_SPEED_HZ    CONFIG_SPI_SPEED_HZ
 
-// Calibration 
-#define VOLTAGE_COEFF   (CONFIG_VOLTAGE_COEFFICIENT_INT / 1000000.0f)
-#define CURRENT_COEFF   (CONFIG_CURRENT_COEFFICIENT_INT / 1000000.0f)
-#define POWER_COEFF     (CONFIG_POWER_COEFFICIENT_INT / 1000000.0f)
-#define ENERGY_COEFF    (CONFIG_ENERGY_COEFFICIENT_INT / 1000000.0f)
-#define CURRENT_OFFSET  (CONFIG_CURRENT_OFFSET_INT / 1000.0f)
-#define AVG_SAMPLES     CONFIG_DEFAULT_AVERAGE_SAMPLES
-
 // NVS namespaces
 #define NVS_NS_SYSTEM   CONFIG_NVS_NS_SYSTEM
 #define NVS_NS_WIFI     CONFIG_NVS_NS_WIFI
 #define NVS_NS_METER    CONFIG_NVS_NS_METER_DATA
 
 /*===============================================================================
-  Data Structures 
+  Calibration Data - From Arduino main.cpp
+  ===============================================================================*/
+
+typedef struct {
+    float voltage_coefficient;     // For REG_AVRMS_2
+    float current_coefficient;     // For REG_AIRMS_2
+    float power_coefficient;        // For REG_AWATT
+    float energy_coefficient;       // For REG_AWATTHR_HI
+    float current_offset;           // Current offset for low values
+} calibration_t;
+
+// Default calibration values 
+static const calibration_t DEFAULT_CALIBRATION = {
+    .voltage_coefficient = 13.1488f,      // For REG_AVRMS_2
+    .current_coefficient = 0.3711543f,   // For REG_AIRMS_2
+    .power_coefficient = 0.66498695f,     // For REG_AWATT
+    .energy_coefficient = 0.858307f,      // For REG_AWATTHR_HI
+    .current_offset = 0.019f              // Current offset for low values
+};
+
+/*===============================================================================
+  Data Structures
   ===============================================================================*/
 
 typedef struct {
@@ -94,21 +115,13 @@ typedef struct {
     float current_at_zc;
 } measurements_t;
 
-typedef struct {
-    float voltage_coefficient;
-    float current_coefficient;
-    float power_coefficient;
-    float energy_coefficient;
-    float current_offset;
-} calibration_t;
-
 /*===============================================================================
   Static Variables
   ===============================================================================*/
 
 static ade9153a_t ade_dev;
 static measurements_t meas;
-static calibration_t cal;
+static calibration_t cal = DEFAULT_CALIBRATION;
 static raw_measurements_t *raw_buffer = NULL;
 static uint8_t buffer_index = 0;
 static bool buffer_ready = false;
@@ -155,6 +168,12 @@ static void save_energy_to_nvs(void)
         return;
     }
     
+    // Save calibration values
+    err = nvs_set_blob(nvs, "calibration", &cal, sizeof(calibration_t));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save calibration: %s", esp_err_to_name(err));
+    }
+    
     err = nvs_commit(nvs);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(err));
@@ -171,7 +190,7 @@ static void load_energy_from_nvs(void)
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(NVS_NS_METER, NVS_READONLY, &nvs);
     if (err != ESP_OK) {
-        ESP_LOGI(TAG, "No saved energy found");
+        ESP_LOGI(TAG, "No saved energy found, using defaults");
         return;
     }
     
@@ -189,9 +208,21 @@ static void load_energy_from_nvs(void)
         ESP_LOGI(TAG, "Loaded relay state: %s", relay_state ? "ON" : "OFF");
     }
     
+    // Load calibration values
+    len = sizeof(calibration_t);
+    err = nvs_get_blob(nvs, "calibration", &cal, &len);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "No calibration found, using defaults");
+        cal = DEFAULT_CALIBRATION;
+    }
+    
     nvs_close(nvs);
     
     ESP_LOGI(TAG, "Loaded from NVS: energy=%.3f Wh", cumulative_energy);
+    ESP_LOGI(TAG, "Calibration: V=%.6f I=%.6f P=%.6f E=%.6f Offset=%.3f",
+             cal.voltage_coefficient, cal.current_coefficient,
+             cal.power_coefficient, cal.energy_coefficient,
+             cal.current_offset);
 }
 
 static void save_offline_data(void)
@@ -219,66 +250,196 @@ static void save_offline_data(void)
 }
 
 /*===============================================================================
-  ADE9153A Functions
+  ADE9153A Functions - Updated to match Analog Devices implementation
   ===============================================================================*/
+
+static void print_spi_debug(uint8_t *tx_data, int tx_len, uint8_t *rx_data, int rx_len)
+{
+    ESP_LOGI(TAG, "SPI Transaction:");
+    printf("  TX: ");
+    for (int i = 0; i < tx_len; i++) {
+        printf("0x%02X ", tx_data[i]);
+    }
+    printf("\n");
+    if (rx_data && rx_len > 0) {
+        printf("  RX: ");
+        for (int i = 0; i < rx_len; i++) {
+            printf("0x%02X ", rx_data[i]);
+        }
+        printf("\n");
+    }
+}
 
 static bool initialize_ade9153a(void)
 {
-    ESP_LOGI(TAG, "Initializing ADE9153A");
+    ESP_LOGI(TAG, "╔═══════════════════════════════════════════");
+    ESP_LOGI(TAG, "║ Initializing ADE9153A");
+    ESP_LOGI(TAG, "╚═══════════════════════════════════════════");
     
-    // Hardware reset
+    uint8_t init_step = 0;
+    
+    //===========================================================
+    // Step 1: Hardware Reset
+    //===========================================================
+    init_step = 1;
+    ESP_LOGI(TAG, "[Step %d] Hardware reset", init_step);
+    
     gpio_set_direction(PIN_RESET, GPIO_MODE_OUTPUT);
-    gpio_set_level(PIN_RESET, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(PIN_RESET, 1);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(PIN_RESET, LOW);      // Pull reset low
+    vTaskDelay(pdMS_TO_TICKS(10));        // 10ms reset pulse
     
-    // Initialize SPI
+    gpio_set_level(PIN_RESET, HIGH);     // Release reset
+    vTaskDelay(pdMS_TO_TICKS(100));       // 100ms power-up time
+    
+    //===========================================================
+    // Step 2: SPI Initialization
+    //===========================================================
+    init_step = 2;
+    ESP_LOGI(TAG, "[Step %d] SPI initialization", init_step);
+    
     if (!ade9153a_init(&ade_dev, SPI_SPEED_HZ, PIN_CS,
                        PIN_SPI_SCK, PIN_SPI_MOSI, PIN_SPI_MISO)) {
-        ESP_LOGE(TAG, "ADE9153A SPI init failed");
+        ESP_LOGE(TAG, "Step %d failed: SPI init", init_step);
         return false;
     }
     
-    // Configure zero-crossing
-    ESP_LOGI(TAG, "Configuring zero-crossing");
-    ade9153a_write_16(&ade_dev, REG_CFMODE, 0x0001);  // CF2 for ZC
-    ade9153a_write_16(&ade_dev, REG_ZX_CFG, 0x0001);  // Enable ZC
-    ade9153a_write_16(&ade_dev, REG_ZXTHRSH, 0x000A); // Threshold
-    ade9153a_write_16(&ade_dev, REG_ZXTOUT, 0x03E8);  // Timeout
+    //===========================================================
+    // Step 3: Start DSP
+    //===========================================================
+    init_step = 3;
+    ESP_LOGI(TAG, "[Step %d] Starting DSP", init_step);
     
-    // Setup ADE9153A
+    ade9153a_write_16(&ade_dev, REG_RUN, ADE9153A_RUN_ON);
+    vTaskDelay(pdMS_TO_TICKS(100));  // Wait for DSP to start
+    
+    //===========================================================
+    // Step 4: Verify Chip ID
+    //===========================================================
+    init_step = 4;
+    ESP_LOGI(TAG, "[Step %d] Verifying chip ID", init_step);
+    
+    uint32_t version = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
+    ESP_LOGI(TAG, "   Version Register: 0x%08lX", version);
+    
+    if (version != 0x0009153A) {
+        ESP_LOGE(TAG, "Step %d failed: Expected 0x0009153A, got 0x%08lX", 
+                 init_step, version);
+        
+        // Try one more time after longer delay
+        ESP_LOGW(TAG, "Retrying communication...");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        version = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
+        
+        if (version != 0x0009153A) {
+            ESP_LOGE(TAG, "ADE9153A still not detected after retry");
+            return false;
+        }
+        ESP_LOGI(TAG, "ADE9153A detected on retry! ID=0x%08lX", version);
+    } else {
+        ESP_LOGI(TAG, "ADE9153A detected successfully!");
+    }
+    
+    //===========================================================
+    // Step 5: Configure Zero-Crossing Detection
+    //===========================================================
+    init_step = 5;
+    ESP_LOGI(TAG, "[Step %d] Zero-crossing configuration", init_step);
+    
+    ade9153a_write_16(&ade_dev, REG_CFMODE, 0x0001);  // CF2 = zero-crossing output
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_ZX_CFG, 0x0001);  // Enable ZX detection
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_ZXTHRSH, 0x000A); // ZX threshold
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_ZXTOUT, 0x03E8);  // Timeout value
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    //===========================================================
+    // Step 6: Apply Standard Configuration
+    //===========================================================
+    init_step = 6;
+    ESP_LOGI(TAG, "[Step %d] Standard configuration", init_step);
+    
     ade9153a_setup(&ade_dev);
     
-    // Additional configuration from main.cpp
-    ade9153a_write_16(&ade_dev, REG_AI_PGAGAIN, 0x000A);
-    ade9153a_write_32(&ade_dev, REG_CONFIG0, 0);
-    ade9153a_write_16(&ade_dev, REG_EP_CFG, ADE9153A_EP_CFG);
-    ade9153a_write_16(&ade_dev, REG_EGY_TIME, ADE9153A_EGY_TIME);
-    ade9153a_write_32(&ade_dev, REG_AVGAIN, 0xFFF36B16);
-    ade9153a_write_32(&ade_dev, REG_AIGAIN, 7316126);
-    ade9153a_write_16(&ade_dev, REG_PWR_TIME, 3906);
-    ade9153a_write_16(&ade_dev, REG_TEMP_CFG, 0x000C);
-    ade9153a_write_16(&ade_dev, REG_COMPMODE, 0x0005);
+    //===========================================================
+    // Step 7: Additional Configuration
+    //===========================================================
+    init_step = 7;
+    ESP_LOGI(TAG, "[Step %d] Additional configuration", init_step);
     
-    // Start measurements
+    ade9153a_write_16(&ade_dev, REG_AI_PGAGAIN, 0x000A);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_32(&ade_dev, REG_CONFIG0, 0);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_EP_CFG, ADE9153A_EP_CFG);  // Note: 0x0009 from their code
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_EGY_TIME, ADE9153A_EGY_TIME);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    // Pre-calculated gain values from Arduino
+    ade9153a_write_32(&ade_dev, REG_AVGAIN, 0xFFF36B16);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_32(&ade_dev, REG_AIGAIN, 7316126);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_PWR_TIME, 3906);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_TEMP_CFG, 0x000C);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    ade9153a_write_16(&ade_dev, REG_COMPMODE, 0x0005);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    //===========================================================
+    // Step 8: Ensure RUN is still set
+    //===========================================================
+    init_step = 8;
+    ESP_LOGI(TAG, "[Step %d] Verifying RUN state", init_step);
+    
     ade9153a_write_16(&ade_dev, REG_RUN, 0x0001);
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    // Verify chip
-    uint32_t version = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
+    //===========================================================
+    // Step 9: Final Verification
+    //===========================================================
+    init_step = 9;
+    ESP_LOGI(TAG, "[Step %d] Final verification", init_step);
+    
+    version = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
+    ESP_LOGI(TAG, "   Final verification: 0x%08lX", version);
+    
     if (version != 0x0009153A) {
-        ESP_LOGE(TAG, "ADE9153A not detected: ID=0x%08lX", version);
+        ESP_LOGE(TAG, "Step %d failed: Communication lost", init_step);
         return false;
     }
     
-    ESP_LOGI(TAG, "ADE9153A detected, ID=0x%08lX", version);
+    //===========================================================
+    // Step 10: Initialize Zero-Crossing Hardware
+    //===========================================================
+    init_step = 10;
+    ESP_LOGI(TAG, "[Step %d] Zero-crossing hardware", init_step);
     
-    // Initialize zero-crossing hardware
     zero_crossing_init(PIN_ZC);
     zero_crossing_start();
     
+    //===========================================================
+    // Step 11: Clear measurement structure
+    //===========================================================
+    init_step = 11;
     memset(&meas, 0, sizeof(meas));
+    
+    ESP_LOGI(TAG, "\n ADE9153A initialization successful!");
+    ESP_LOGI(TAG, "   All %d steps completed", init_step);
+    
     return true;
 }
 
@@ -286,15 +447,16 @@ static bool read_raw_measurement(raw_measurements_t *raw)
 {
     if (!ade_initialized) return false;
     
+    // Read registers - using synchronized registers
     raw->raw_voltage_rms = (int32_t)ade9153a_read_32(&ade_dev, REG_AVRMS_2);
     raw->raw_current_rms = ade9153a_read_32(&ade_dev, REG_AIRMS_2);
     raw->raw_active_power = (int32_t)ade9153a_read_32(&ade_dev, REG_AWATT);
     raw->raw_energy = (int32_t)ade9153a_read_32(&ade_dev, REG_AWATTHR_HI);
     
-    // Verify chip
-    uint32_t version = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
-    if (version != 0x0009153A) {
-        ESP_LOGW(TAG, "Chip verification failed: 0x%08lX", version);
+    // Quick verification
+    uint32_t version_check = ade9153a_read_32(&ade_dev, REG_VERSION_PRODUCT);
+    if (version_check != 0x0009153A) {
+        ESP_LOGW(TAG, "Chip verification failed: 0x%08lX", version_check);
         return false;
     }
     
@@ -303,7 +465,9 @@ static bool read_raw_measurement(raw_measurements_t *raw)
 
 static void apply_averaging(void)
 {
-    if (AVG_SAMPLES < 1 || !raw_buffer) {
+    uint8_t avg_samples = CONFIG_DEFAULT_AVERAGE_SAMPLES;
+    
+    if (avg_samples < 1 || !raw_buffer) {
         if (buffer_index > 0) {
             meas.avg_raw_voltage_rms = raw_buffer[0].raw_voltage_rms;
             meas.avg_raw_current_rms = raw_buffer[0].raw_current_rms;
@@ -318,7 +482,7 @@ static void apply_averaging(void)
     int64_t sum_power = 0;
     int64_t sum_energy = 0;
     
-    uint8_t samples = buffer_ready ? AVG_SAMPLES : buffer_index;
+    uint8_t samples = buffer_ready ? avg_samples : buffer_index;
     if (samples == 0) return;
     
     for (uint8_t i = 0; i < samples; i++) {
@@ -344,7 +508,7 @@ static bool read_measurements(void)
     }
     
     buffer_index++;
-    if (buffer_index >= AVG_SAMPLES) {
+    if (buffer_index >= CONFIG_DEFAULT_AVERAGE_SAMPLES) {
         buffer_index = 0;
         buffer_ready = true;
     }
@@ -358,11 +522,10 @@ static void calculate_measurements(void)
 {
     if (!measurement_valid) return;
     
-    // Voltage 
+    // Apply calibration to averaged values
     meas.voltage_rms = (float)meas.avg_raw_voltage_rms * 
                        cal.voltage_coefficient / 1000000.0f;
     
-    // Current 
     meas.current_rms = (float)meas.avg_raw_current_rms * 
                        cal.current_coefficient / 1000000.0f;
     
@@ -371,7 +534,7 @@ static void calculate_measurements(void)
         meas.current_rms += cal.current_offset;
     }
     
-    // Power 
+    // Power calculation using averaged value
     float raw_power = fabsf((float)meas.avg_raw_active_power);
     meas.active_power = raw_power * cal.power_coefficient / 1000.0f;
     
@@ -387,32 +550,32 @@ static void calculate_measurements(void)
         meas.reactive_power = 0.0f;
     }
     
-    // Frequency from zero-crossing
-    float zc_freq = zero_crossing_calculate_frequency();
-    if (zc_freq > 0) {
-        meas.frequency = zc_freq;
+    // Calculate frequency from zero-crossing
+    float zc_frequency = zero_crossing_calculate_frequency();
+    if (zc_frequency > 0.0f) {
+        meas.frequency = zc_frequency;
     } else {
-        // Fallback to register
-        uint32_t period = ade9153a_read_32(&ade_dev, REG_APERIOD);
-        if (period > 0) {
-            meas.frequency = (4000.0f * 65536.0f) / (float)(period + 1);
+        // Fallback to register-based frequency calculation
+        uint32_t period_raw = ade9153a_read_32(&ade_dev, REG_APERIOD);
+        if (period_raw > 0) {
+            meas.frequency = (4000.0f * 65536.0f) / (float)(period_raw + 1);
         } else {
             meas.frequency = 0.0f;
         }
     }
     
-    // Power factor
-    int32_t pf_raw = (int32_t)ade9153a_read_32(&ade_dev, REG_APF);
-    meas.power_factor = fabsf((float)pf_raw / 134217728.0f);
+    // Read power factor
+    int32_t powerFactor_raw = (int32_t)ade9153a_read_32(&ade_dev, REG_APF);
+    meas.power_factor = fabsf((float)powerFactor_raw / 134217728.0f);
     
-    // Temperature
+    // Read temperature
     temperature_t temp;
     ade9153a_read_temperature(&ade_dev, &temp);
     meas.temperature = temp.TemperatureVal;
     
-    // Clipping detection
-    meas.waveform_clipped = (abs(meas.avg_raw_voltage_rms) > 8000000) ||
-                            (meas.avg_raw_current_rms > 8000000);
+    // Check for clipping
+    meas.waveform_clipped = (abs(meas.avg_raw_voltage_rms) > 8000000) || 
+                           (meas.avg_raw_current_rms > 8000000);
     
     // Zero-crossing sync info
     if (zc_sync_enabled && zero_crossing_detected()) {
@@ -441,12 +604,12 @@ static void update_energy_accumulation(void)
         cumulative_energy += energy_increment;
         meas.energy_wh = cumulative_energy;
         
-        // Save periodically
-        static float last_saved = 0;
-        if (fabsf(cumulative_energy - last_saved) > 0.1f ||
+        // Save energy periodically
+        static float last_saved_energy = 0;
+        if (fabsf(cumulative_energy - last_saved_energy) > 0.1f || 
             now - last_storage_save > STORAGE_SAVE_INTERVAL_MS) {
             save_energy_to_nvs();
-            last_saved = cumulative_energy;
+            last_saved_energy = cumulative_energy;
             last_storage_save = now;
         }
     }
@@ -456,13 +619,89 @@ static void update_energy_accumulation(void)
 
 static void validate_measurements(void)
 {
-    if (meas.voltage_rms > 300.0f ||
-        meas.current_rms < 0.0f || meas.current_rms > 100.0f ||
-        (meas.frequency > 0 && (meas.frequency < 45.0f || meas.frequency > 65.0f))) {
+    // Basic sanity checks
+    if (meas.voltage_rms > 300.0f) {
         measurement_valid = false;
-    } else {
-        measurement_valid = true;
+        return;
     }
+    
+    if (meas.current_rms < 0.0f || meas.current_rms > 100.0f) {
+        measurement_valid = false;
+        return;
+    }
+    
+    // Check frequency validity
+    if (meas.frequency > 0 && (meas.frequency < 45.0f || meas.frequency > 65.0f)) {
+        measurement_valid = false;
+        return;
+    }
+    
+    measurement_valid = true;
+}
+
+static void check_zc_synchronization(void)
+{
+    static uint32_t last_zc_check = 0;
+    static uint32_t last_zc_count = 0;
+    uint32_t now = esp_timer_get_time() / 1000;
+    
+    if (now - last_zc_check > 10000) {  // Check every 10 seconds
+        last_zc_check = now;
+        
+        uint32_t current_count = zero_crossing_get_counter();
+        uint32_t zc_events = current_count - last_zc_count;
+        last_zc_count = current_count;
+        
+        // Calculate expected zero-crossings (2 per cycle) at 50Hz
+        uint32_t expected_zc_events = 10 * 2 * 50;
+        
+        if (zc_events < expected_zc_events * 0.5) {
+            ESP_LOGW(TAG, "Low zero-crossing count: %lu (expected ~%lu)", 
+                     zc_events, expected_zc_events);
+        }
+    }
+}
+
+static void print_measurements(void)
+{
+    static uint32_t measurement_count = 0;
+    
+    ESP_LOGI(TAG, "\n═══════════════════════════════════════════");
+    ESP_LOGI(TAG, "         MEASUREMENT #%lu", ++measurement_count);
+    ESP_LOGI(TAG, "═══════════════════════════════════════════");
+    
+    // System Status
+    ESP_LOGI(TAG, "SYSTEM STATUS");
+    ESP_LOGI(TAG, "   Relay:        %s", relay_get_state() ? "ON" : "OFF");
+    ESP_LOGI(TAG, "   Temperature:  %.1f°C", meas.temperature);
+    ESP_LOGI(TAG, "   Frequency:    %.2f Hz", meas.frequency);
+    
+    // Power Measurements
+    ESP_LOGI(TAG, "\nPOWER MEASUREMENTS");
+    ESP_LOGI(TAG, "   Voltage:      %7.3f V", meas.voltage_rms);
+    ESP_LOGI(TAG, "   Current:      %7.3f A", meas.current_rms);
+    ESP_LOGI(TAG, "   Power (Active): %6.3f W", meas.active_power);
+    
+    if (meas.reactive_power > 0.1f) {
+        ESP_LOGI(TAG, "   Power (Reactive): %5.3f VAR", meas.reactive_power);
+    }
+    
+    if (meas.apparent_power > 0.1f) {
+        ESP_LOGI(TAG, "   Power (Apparent): %5.3f VA", meas.apparent_power);
+    }
+    
+    // Energy & Power Quality
+    ESP_LOGI(TAG, "\nENERGY & QUALITY");
+    ESP_LOGI(TAG, "   Energy Total:  %.3f Wh", cumulative_energy);
+    ESP_LOGI(TAG, "   Power Factor:  %.3f", meas.power_factor);
+    
+    // Status Indicators
+    ESP_LOGI(TAG, "\nSTATUS INDICATORS");
+    ESP_LOGI(TAG, "   Waveform:     %s", meas.waveform_clipped ? "CLIPPED" : "Clean");
+    ESP_LOGI(TAG, "   ZC Sync:      %s", meas.synchronized ? "Synced" : "Pending");
+    ESP_LOGI(TAG, "   Valid Data:   %s", measurement_valid ? "Valid" : "Invalid");
+    
+    ESP_LOGI(TAG, "═══════════════════════════════════════════");
 }
 
 /*===============================================================================
@@ -490,23 +729,22 @@ static void button_event_handler(button_event_t event, uint32_t param)
             }
             break;
             
-        case BUTTON_EVENT_LONG_PRESS:  // 4 seconds
+        case BUTTON_EVENT_LONG_PRESS:
             ESP_LOGI(TAG, "Button long press (4s)");
             led_set_mode(LED_MODE_BLINK_FAST);
             break;
             
-        case BUTTON_EVENT_VERY_LONG_PRESS:  // 7 seconds
+        case BUTTON_EVENT_VERY_LONG_PRESS:
             ESP_LOGI(TAG, "Button very long press (7s)");
             led_set_mode(LED_MODE_BLINK_RAPID);
             break;
             
-        case BUTTON_EVENT_HOLD_10S:  // 10 seconds - reset
+        case BUTTON_EVENT_HOLD_10S:
             ESP_LOGW(TAG, "Button hold 10s - resetting WiFi credentials");
             led_set_mode(LED_MODE_BLINK_PATTERN);
             break;
             
         case BUTTON_EVENT_RELEASED:
-            // If released after 10s and within confirmation window
             if (param >= 10000) {
                 ESP_LOGI(TAG, "Reset confirmed - erasing credentials and restarting");
                 wifi_manager_reset_credentials();
@@ -534,6 +772,15 @@ static void button_event_handler(button_event_t event, uint32_t param)
 
 static void mqtt_relay_callback(bool state)
 {
+    static uint32_t last_relay_callback = 0;
+    uint32_t now = esp_timer_get_time() / 1000;
+    
+    if (now - last_relay_callback < 500) {
+        return;
+    }
+    
+    last_relay_callback = now;
+    
     ESP_LOGI(TAG, "MQTT relay command: %s", state ? "ON" : "OFF");
     relay_set(state);
     
@@ -562,8 +809,15 @@ static void mqtt_energy_reset_callback(void)
 
 static void mqtt_shadow_callback(const shadow_state_t *state)
 {
+    static uint32_t last_shadow_update = 0;
+    
+    if (esp_timer_get_time()/1000 - last_shadow_update < 1000) {
+        ESP_LOGD(TAG, "Shadow update too frequent");
+        return;
+    }
+    
+    last_shadow_update = esp_timer_get_time()/1000;
     ESP_LOGD(TAG, "Shadow updated");
-    // Handle any shadow synchronization if needed
 }
 
 /*===============================================================================
@@ -642,11 +896,10 @@ static void measurement_task(void *pvParameters)
         vTaskDelayUntil(&last_wake, interval);
         
         if (ade_initialized) {
+            // Synchronize with zero-crossing before reading
             if (zc_sync_enabled) {
-                // Wait for zero-crossing (max 50ms)
-                if (zero_crossing_wait(50)) {
+                if (zero_crossing_wait(50)) {  // Wait up to 50ms
                     meas.synchronized = true;
-                    // Small delay to stabilize
                     esp_rom_delay_us(100);
                 } else {
                     meas.synchronized = false;
@@ -660,14 +913,12 @@ static void measurement_task(void *pvParameters)
             }
         }
         
-        // Debug print periodically
+        check_zc_synchronization();
+        
         uint32_t now = esp_timer_get_time() / 1000;
         if (now - last_debug_print > DEBUG_INTERVAL_MS) {
             last_debug_print = now;
-            ESP_LOGI(TAG, "V=%.2fV I=%.3fA P=%.2fW E=%.3fWh PF=%.3f F=%.1fHz T=%.1f°C",
-                     meas.voltage_rms, meas.current_rms, meas.active_power,
-                     cumulative_energy, meas.power_factor, meas.frequency,
-                     meas.temperature);
+            print_measurements();
         }
     }
 }
@@ -681,7 +932,6 @@ static void mqtt_task(void *pvParameters)
     TickType_t last_wake = xTaskGetTickCount();
     const TickType_t interval = pdMS_TO_TICKS(100);
     
-    // Wait for WiFi to be fully connected before first MQTT attempt
     vTaskDelay(pdMS_TO_TICKS(2000));
     
     while (1) {
@@ -692,26 +942,22 @@ static void mqtt_task(void *pvParameters)
         
         uint32_t now = esp_timer_get_time() / 1000;
         
-        // Publish telemetry
         if (wifi_manager_is_connected() && mqtt_manager_is_connected()) {
             if (now - last_publish_time > PUBLISH_INTERVAL_MS) {
                 last_publish_time = now;
                 publish_telemetry();
             }
         } else if (!wifi_manager_is_connected()) {
-            // Save offline data
             if (now - last_storage_save > OFFLINE_SAVE_INTERVAL_MS) {
                 last_storage_save = now;
                 save_offline_data();
             }
         }
         
-        // LED handling
         led_task_handler();
         button_task_handler();
     }
 }
-
 
 /*===============================================================================
   Main Application
@@ -736,13 +982,7 @@ void app_main(void)
     
     system_start_time = esp_timer_get_time() / 1000;
     
-    // Initialize calibration - EXACT values
-    cal.voltage_coefficient = VOLTAGE_COEFF;
-    cal.current_coefficient = CURRENT_COEFF;
-    cal.power_coefficient = POWER_COEFF;
-    cal.energy_coefficient = ENERGY_COEFF;
-    cal.current_offset = CURRENT_OFFSET;
-    
+    // Display calibration values
     ESP_LOGI(TAG, "Calibration: V=%.6f I=%.6f P=%.6f E=%.6f Offset=%.3f",
              cal.voltage_coefficient, cal.current_coefficient,
              cal.power_coefficient, cal.energy_coefficient,
@@ -753,7 +993,7 @@ void app_main(void)
     led_init(PIN_LED);
     button_init(PIN_BUTTON, button_event_handler);
     
-    // Load saved energy
+    // Load saved energy and calibration
     load_energy_from_nvs();
     
     // Check if just completed setup
@@ -786,11 +1026,11 @@ void app_main(void)
     
     if (ade_initialized) {
         // Allocate averaging buffer
-        if (AVG_SAMPLES > 0) {
-            raw_buffer = malloc(AVG_SAMPLES * sizeof(raw_measurements_t));
+        if (CONFIG_DEFAULT_AVERAGE_SAMPLES > 0) {
+            raw_buffer = malloc(CONFIG_DEFAULT_AVERAGE_SAMPLES * sizeof(raw_measurements_t));
             if (raw_buffer) {
-                memset(raw_buffer, 0, AVG_SAMPLES * sizeof(raw_measurements_t));
-                ESP_LOGI(TAG, "Averaging buffer allocated (%d samples)", AVG_SAMPLES);
+                memset(raw_buffer, 0, CONFIG_DEFAULT_AVERAGE_SAMPLES * sizeof(raw_measurements_t));
+                ESP_LOGI(TAG, "Averaging buffer allocated (%d samples)", CONFIG_DEFAULT_AVERAGE_SAMPLES);
             } else {
                 ESP_LOGE(TAG, "Failed to allocate averaging buffer");
             }
@@ -809,12 +1049,10 @@ void app_main(void)
     // Start MQTT if WiFi is connected and not in setup mode
     if (wifi_manager_is_connected() && !wifi_manager_is_setup_mode()) {
         ESP_LOGI(TAG, "WiFi connected, waiting for network stability...");
-        vTaskDelay(pdMS_TO_TICKS(3000));  // 3 second delay for network stability
+        vTaskDelay(pdMS_TO_TICKS(3000));
         
         if (mqtt_manager_start()) {
             ESP_LOGI(TAG, "MQTT manager started");
-            
-            // Give MQTT client time to initialize
             vTaskDelay(pdMS_TO_TICKS(500));
             
             if (!mqtt_manager_connect()) {

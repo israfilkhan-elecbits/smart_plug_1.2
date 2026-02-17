@@ -4,25 +4,24 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief Initialize zero-crossing detection
+ * @brief Initialize zero-crossing detection -
  * 
- * @param gpio_pin GPIO pin for zero-crossing input
+ * @param gpio_pin GPIO pin for zero-crossing input (connected to CF2 pin of ADE9153A)
  */
 void zero_crossing_init(int gpio_pin);
 
 /**
- * @brief Start zero-crossing detection (enable interrupt)
+ * @brief Start zero-crossing detection (enable interrupt) -
  */
 void zero_crossing_start(void);
 
 /**
- * @brief Stop zero-crossing detection (disable interrupt)
+ * @brief Stop zero-crossing detection (disable interrupt) - 
  */
 void zero_crossing_stop(void);
 
@@ -48,21 +47,21 @@ uint32_t zero_crossing_get_last_time(void);
 uint32_t zero_crossing_get_last_period(void);
 
 /**
- * @brief Get zero-crossing counter
+ * @brief Get zero-crossing counter (total number of zero-crossings since start)
  * 
  * @return uint32_t Number of zero-crossings since start
  */
 uint32_t zero_crossing_get_counter(void);
 
 /**
- * @brief Calculate frequency from zero-crossing periods
+ * @brief Calculate frequency from zero-crossing periods - matches calculateFrequencyFromZC()
  * 
- * @return float Frequency in Hz (0 if no valid period)
+ * @return float Frequency in Hz (0 if no valid period, between 45-65Hz if valid)
  */
 float zero_crossing_calculate_frequency(void);
 
 /**
- * @brief Wait for next zero-crossing with timeout
+ * @brief Wait for next zero-crossing with timeout - matches waitForZeroCrossing()
  * 
  * @param timeout_ms Timeout in milliseconds
  * @return true if zero-crossing detected within timeout

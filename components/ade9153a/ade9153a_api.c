@@ -10,7 +10,7 @@
 static const char *TAG = "ADE9153A_API";
 
 /*===============================================================================
-  Setup Function 
+  Setup Function - Matching ade9153a_setup_example() from Analog Devices
   ===============================================================================*/
 
 void ade9153a_setup(ade9153a_t *dev)
@@ -44,7 +44,7 @@ void ade9153a_setup(ade9153a_t *dev)
 }
 
 /*===============================================================================
-  Data Reading Functions 
+  Data Reading Functions - Matching Analog Devices implementation
   ===============================================================================*/
 
 void ade9153a_read_energy(ade9153a_t *dev, energy_regs_t *data)
@@ -112,7 +112,7 @@ void ade9153a_read_rms(ade9153a_t *dev, rms_regs_t *data)
     temp_value = (float)temp_reg * CAL_IRMS_CC_LIB / 1000.0f;  // RMS in mA
     data->CurrentRMSValue = temp_value;
     
-    // Voltage RMS - same as original
+    // Voltage RMS
     temp_reg = ade9153a_read_32(dev, REG_AVRMS);
     data->VoltageRMSReg = (int32_t)temp_reg;
     temp_value = (float)temp_reg * CAL_VRMS_CC_LIB / 1000.0f;  // RMS in mV
@@ -151,16 +151,16 @@ void ade9153a_read_pq(ade9153a_t *dev, pq_regs_t *data)
     // Power Factor 
     temp_reg = (int32_t)ade9153a_read_32(dev, REG_APF);
     data->PowerFactorReg = temp_reg;
-    temp_value = (float)temp_reg / 134217728.0f;  // Same as original
+    temp_value = (float)temp_reg / 134217728.0f;
     data->PowerFactorValue = temp_value;
     
     // Period/Frequency 
     temp_reg = (int32_t)ade9153a_read_32(dev, REG_APERIOD);
     data->PeriodReg = temp_reg;
-    temp_value = (float)(4000 * 65536) / (float)(temp_reg + 1);  // Same formula
+    temp_value = (float)(4000 * 65536) / (float)(temp_reg + 1);
     data->FrequencyValue = temp_value;
     
-    // Angle -
+    // Angle
     temp = ade9153a_read_16(dev, REG_ACCMODE);
     if ((temp & 0x0010) > 0) {
         mul_constant = 0.02109375f;   // multiplier for 60Hz system
@@ -170,7 +170,7 @@ void ade9153a_read_pq(ade9153a_t *dev, pq_regs_t *data)
     
     temp_reg = (int16_t)ade9153a_read_16(dev, REG_ANGL_AV_AI);
     data->AngleReg_AV_AI = temp_reg;
-    temp_value = temp_reg * mul_constant;  // Angle in degrees
+    temp_value = temp_reg * mul_constant;
     data->AngleValue_AV_AI = temp_value;
 }
 
@@ -184,7 +184,7 @@ void ade9153a_read_acal(ade9153a_t *dev, acal_regs_t *data)
     // AICC 
     temp_reg = ade9153a_read_32(dev, REG_MS_ACAL_AICC);
     data->AcalAICCReg = (int32_t)temp_reg;
-    temp_value = (float)temp_reg / 2048.0f;  // Same conversion
+    temp_value = (float)temp_reg / 2048.0f;
     data->AICC = temp_value;
     
     // AICERT
@@ -194,7 +194,7 @@ void ade9153a_read_acal(ade9153a_t *dev, acal_regs_t *data)
     // AVCC 
     temp_reg = ade9153a_read_32(dev, REG_MS_ACAL_AVCC);
     data->AcalAVCCReg = (int32_t)temp_reg;
-    temp_value = (float)temp_reg / 2048.0f;  // Same conversion
+    temp_value = (float)temp_reg / 2048.0f;
     data->AVCC = temp_value;
     
     // AVCERT 
@@ -203,7 +203,7 @@ void ade9153a_read_acal(ade9153a_t *dev, acal_regs_t *data)
 }
 
 /*===============================================================================
-  Autocalibration Functions 
+  Autocalibration Functions - Matching Analog Devices implementation
   ===============================================================================*/
 
 bool ade9153a_start_acal_ai_normal(ade9153a_t *dev)
@@ -273,9 +273,9 @@ bool ade9153a_apply_acal(ade9153a_t *dev, float aicc, float avcc)
     int32_t aigain;
     int32_t avgain;
     
-    // Same formula as original 
-    aigain = (int32_t)((aicc / (CAL_IRMS_CC_LIB * 1000.0f) - 1.0f) * 127341298.0f);
-    avgain = (int32_t)((avcc / (CAL_VRMS_CC_LIB * 1000.0f) - 1.0f) * 127341298.0f);
+    // Using their formula with 134217728
+    aigain = (int32_t)((-(aicc / (CAL_IRMS_CC_LIB * 1000.0f)) - 1.0f) * 134217728.0f);
+    avgain = (int32_t)((avcc / (CAL_VRMS_CC_LIB * 1000.0f) - 1.0f) * 134217728.0f);
     
     ade9153a_write_32(dev, REG_AIGAIN, (uint32_t)aigain);
     ade9153a_write_32(dev, REG_AVGAIN, (uint32_t)avgain);
@@ -284,7 +284,7 @@ bool ade9153a_apply_acal(ade9153a_t *dev, float aicc, float avcc)
 }
 
 /*===============================================================================
-  Temperature Reading 
+  Temperature Reading
   ===============================================================================*/
 
 void ade9153a_read_temperature(ade9153a_t *dev, temperature_t *data)
@@ -299,7 +299,7 @@ void ade9153a_read_temperature(ade9153a_t *dev, temperature_t *data)
 
     // Start temperature acquisition 
     ade9153a_write_16(dev, REG_TEMP_CFG, ADE9153A_TEMP_CFG);
-    vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay (original used 10ms)
+    vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay
     
     // Read trim values
     trim = ade9153a_read_32(dev, REG_TEMP_TRIM);

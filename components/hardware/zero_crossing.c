@@ -9,22 +9,21 @@
 
 static const char *TAG = "ZC";
 
-// Static variables for ISR and task communication
+// Static variables for ISR and task communication - matches Arduino volatile variables
 static volatile bool zc_detected = false;
 static volatile uint32_t last_zc_time = 0;
 static volatile uint32_t last_zc_period = 0;
 static volatile uint32_t zc_counter = 0;
 static int zc_gpio = -1;
 static SemaphoreHandle_t zc_semaphore = NULL;
-static TaskHandle_t zc_task_handle = NULL;
 
-// ISR - must be in IRAM
+// ISR - must be in IRAM - matches Arduino IRAM_ATTR zeroCrossingISR()
 static void IRAM_ATTR zero_crossing_isr(void *arg)
 {
     uint32_t now = (uint32_t)esp_timer_get_time();
     BaseType_t wake = pdFALSE;
     
-    // Calculate period between zero crossings
+    // Calculate period between zero crossings - exactly like Arduino
     if (last_zc_time > 0) {
         last_zc_period = now - last_zc_time;
     }
@@ -52,7 +51,7 @@ void zero_crossing_init(int gpio_pin)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE  // Rising edge interrupt
+        .intr_type = GPIO_INTR_POSEDGE  // Rising edge interrupt - matches Arduino RISING
     };
     gpio_config(&io_conf);
     
@@ -76,7 +75,7 @@ void zero_crossing_start(void)
         isr_service_installed = true;
     }
     
-    // Add ISR handler
+    // Add ISR handler - matches attachInterrupt()
     gpio_isr_handler_add(zc_gpio, zero_crossing_isr, NULL);
     
     // Reset state
@@ -92,7 +91,7 @@ void zero_crossing_stop(void)
 {
     if (zc_gpio < 0) return;
     
-    gpio_isr_handler_remove(zc_gpio);
+    gpio_isr_handler_remove(zc_gpio);  // matches detachInterrupt()
     ESP_LOGI(TAG, "Zero-crossing detection stopped");
 }
 
@@ -123,6 +122,7 @@ float zero_crossing_calculate_frequency(void)
     }
     
     // Calculate frequency from period (period is in microseconds)
+    // Formula: f = 1,000,000 / period (microseconds)
     float frequency = 1000000.0f / (float)last_zc_period;
     
     // Validate frequency (should be around 50Hz or 60Hz)
@@ -139,7 +139,7 @@ bool zero_crossing_wait(uint32_t timeout_ms)
         return false;
     }
     
-    // Wait for semaphore from ISR
+    // Wait for semaphore from ISR 
     if (xSemaphoreTake(zc_semaphore, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
         return true;
     }

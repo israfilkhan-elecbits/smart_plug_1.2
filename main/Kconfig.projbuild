@@ -165,17 +165,17 @@ menu "Smart Plug Configuration"
 
         config VOLTAGE_COEFFICIENT_INT
             int "Voltage Coefficient (microvolts per code)"
-            default 13006800
+            default 13148800  
             range 1000000 100000000
             help
                 Voltage RMS coefficient in microvolts per code (actual value / 1000000)
 
         config CURRENT_COEFFICIENT_INT
             int "Current Coefficient (microamps per code)"
-            default 365032
+            default 371154    
             range 10000 10000000
             help
-                Current RMS coefficient in microamps per code (actual value / 1000000)
+                 Current RMS coefficient in microamps per code (actual value / 1000000)
 
         config POWER_COEFFICIENT_INT
             int "Power Coefficient (microwatts per code)"
@@ -222,4 +222,4 @@ menu "Smart Plug Configuration"
 
     endmenu
 
-endmenu
+endmenu 
