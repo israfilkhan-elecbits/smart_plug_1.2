@@ -10,7 +10,7 @@
 static const char *TAG = "ADE9153A_API";
 
 /*===============================================================================
-  Setup Function - Matching ade9153a_setup_example() from Analog Devices
+  Setup Function 
   ===============================================================================*/
 
 void ade9153a_setup(ade9153a_t *dev)
@@ -44,7 +44,7 @@ void ade9153a_setup(ade9153a_t *dev)
 }
 
 /*===============================================================================
-  Data Reading Functions - Matching Analog Devices implementation
+  Data Reading Functions 
   ===============================================================================*/
 
 void ade9153a_read_energy(ade9153a_t *dev, energy_regs_t *data)
@@ -203,7 +203,7 @@ void ade9153a_read_acal(ade9153a_t *dev, acal_regs_t *data)
 }
 
 /*===============================================================================
-  Autocalibration Functions - Matching Analog Devices implementation
+  Autocalibration Functions 
   ===============================================================================*/
 
 bool ade9153a_start_acal_ai_normal(ade9153a_t *dev)
@@ -273,7 +273,6 @@ bool ade9153a_apply_acal(ade9153a_t *dev, float aicc, float avcc)
     int32_t aigain;
     int32_t avgain;
     
-    // Using their formula with 134217728
     aigain = (int32_t)((-(aicc / (CAL_IRMS_CC_LIB * 1000.0f)) - 1.0f) * 134217728.0f);
     avgain = (int32_t)((avcc / (CAL_VRMS_CC_LIB * 1000.0f) - 1.0f) * 134217728.0f);
     
@@ -309,7 +308,7 @@ void ade9153a_read_temperature(ade9153a_t *dev, temperature_t *data)
     // Read temperature result
     temp_reg = ade9153a_read_16(dev, REG_TEMP_RSLT);
     
-    // Same formula: ((float)offset / 32.00) - ((float)temp_reg * (float)gain/(float)131072)
+    // formula: ((float)offset / 32.00) - ((float)temp_reg * (float)gain/(float)131072)
     temp_value = ((float)offset / 32.0f) - ((float)temp_reg * (float)gain / 131072.0f);
     
     data->TemperatureReg = temp_reg;

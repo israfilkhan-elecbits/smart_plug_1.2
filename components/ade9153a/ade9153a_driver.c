@@ -14,7 +14,7 @@ static const char *TAG = "ADE9153A_DRV";
 #define ADE9153A_DEBUG 0
 
 /*===============================================================================
-  SPI Transaction Helpers - EXACT match with Analog Devices implementation
+  SPI Transaction Helpers 
   ===============================================================================*/
 
 static void spi_write_bytes(spi_device_handle_t spi, uint8_t *bytes, uint8_t length)
@@ -84,7 +84,7 @@ bool ade9153a_init(ade9153a_t *dev, uint32_t spi_speed, int cs_pin,
         .max_transfer_sz = 32,
     };
     
-    // SPI device configuration - SPI mode 0 as per their code
+    // SPI device configuration - SPI mode 0 
     spi_device_interface_config_t devcfg = {
         .mode = 0,                          // SPI mode 0 (CPOL=0, CPHA=0)
         .clock_speed_hz = spi_speed,        // 1 MHz default
@@ -118,7 +118,7 @@ bool ade9153a_init(ade9153a_t *dev, uint32_t spi_speed, int cs_pin,
 }
 
 /*===============================================================================
-  Core SPI Operations - Matching their ade9153a_spi_write and ade9153a_spi_read
+  Core SPI Operations - ade9153a_spi_write and ade9153a_spi_read
   ===============================================================================*/
 
 static bool spi_write(ade9153a_t *dev, uint8_t *data, uint8_t length)
@@ -170,7 +170,7 @@ void ade9153a_write_16(ade9153a_t *dev, uint16_t address, uint16_t data)
 {
     uint16_t cmd = get_cmd_for(address, false);  // false = write
     
-    // Create byte array exactly like their code:
+    // Create byte array
     // uint8_t data_bytes[4] = { cmd>>8, cmd, data>>8, data };
     uint8_t data_bytes[4] = {
         (cmd >> 8) & 0xFF,    // Command high byte
@@ -192,7 +192,7 @@ void ade9153a_write_32(ade9153a_t *dev, uint16_t address, uint32_t data)
 {
     uint16_t cmd = get_cmd_for(address, false);  // false = write
     
-    // Create byte array exactly like their code:
+    // byte array 
     // uint8_t data_bytes[6] = { cmd>>8, cmd, data>>24, data>>16, data>>8, data };
     uint8_t data_bytes[6] = {
         (cmd >> 8) & 0xFF,           // Command high byte
@@ -246,7 +246,7 @@ uint32_t ade9153a_read_32(ade9153a_t *dev, uint16_t address)
     
     spi_read(dev, cmd, data_buffer, 4);
     
-    // Reconstruct 32-bit value exactly like their code:
+    // Reconstruct 32-bit value 
     // data = (data_buffer[0]<<24) | (data_buffer[1]<<16) | (data_buffer[2]<<8) | data_buffer[3]
     uint32_t result = ((uint32_t)data_buffer[0] << 24) |
                       ((uint32_t)data_buffer[1] << 16) |

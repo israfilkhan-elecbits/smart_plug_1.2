@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 /*===============================================================================
-  Configuration Register Defaults - From ADE9153A.h
+  Configuration Register Defaults 
   ===============================================================================*/
 
 #define ADE9153A_AI_PGAGAIN         0x000A      /* Signal on IAN, current channel gain=16x */
@@ -35,7 +35,7 @@ extern "C" {
 #define ADE9153A_TEMP_CFG            0x000C      /* Temperature sensor configuration */
 
 /*===============================================================================
-  Calibration Constants - From ADE9153A.h
+  Calibration Constants
   ===============================================================================*/
 #define CAL_IRMS_CC_LIB       0.838190f   /* (uA/code) - Library default */
 #define CAL_VRMS_CC_LIB       13.41105f   /* (uV/code) - Library default */
@@ -43,7 +43,7 @@ extern "C" {
 #define CAL_ENERGY_CC_LIB     0.858307f   /* (uWhr/xTHR_HI code) - Library default */
 
 /*===============================================================================
-  Data Structures - From ADE9153A.h
+  Data Structures 
   ===============================================================================*/
 
 typedef struct {

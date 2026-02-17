@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 /*===============================================================================
-  Register Address Definitions - From ADE9153A_regs.h
+  Register Address Definitions 
   ===============================================================================*/
 
 #define REG_AIGAIN            0x0000    /* Phase A current gain adjust. */
