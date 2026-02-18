@@ -62,15 +62,24 @@ static void (*shadow_update_callback)(const shadow_state_t *state) = NULL;
 // Time sync
 static time_t last_time_sync = 0;
 static SemaphoreHandle_t time_sync_semaphore = NULL;
+static bool sntp_initialized = false;
 
 // Reconnect
 static uint32_t reconnect_attempts = 0;
 static uint32_t last_reconnect_attempt = 0;
-#define RECONNECT_INTERVAL_MS 5000
+#define RECONNECT_INTERVAL_MS 10000
+#define MAX_RECONNECT_ATTEMPTS 5
 
 // LWT message
 #define LWT_MESSAGE_DISCONNECTED "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"false\"}}}}"
 #define LWT_MESSAGE_CONNECTED    "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"true\"}}}}"
+
+/*===============================================================================
+  Forward Declarations
+  ===============================================================================*/
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
+                               int32_t event_id, void *event_data);
 
 /*===============================================================================
   Certificate Verification Helper
@@ -83,7 +92,6 @@ static void verify_certificates(void)
     ESP_LOGI(TAG, "Device Cert length: %d", aws_cert_crt_len);
     ESP_LOGI(TAG, "Private Key length: %d", aws_cert_private_len);
     
-    // Check if certificates start with valid PEM markers
     if (strncmp(aws_cert_ca, "-----BEGIN CERTIFICATE-----", 27) == 0) {
         ESP_LOGI(TAG, "CA Cert format: OK");
     } else {
@@ -104,7 +112,7 @@ static void verify_certificates(void)
 }
 
 /*===============================================================================
-  Time Synchronization
+  Time Synchronization - Updated with esp_* functions
   ===============================================================================*/
 
 static void time_sync_notification_cb(struct timeval *tv)
@@ -117,20 +125,25 @@ static void time_sync_notification_cb(struct timeval *tv)
 
 bool mqtt_manager_sync_time(void)
 {
+    if (sntp_initialized) {
+        ESP_LOGI(TAG, "SNTP already initialized, skipping");
+        return true;
+    }
+    
     if (!time_sync_semaphore) {
         time_sync_semaphore = xSemaphoreCreateBinary();
     }
     
     ESP_LOGI(TAG, "Synchronizing time via NTP...");
     
-    // Initialize SNTP
+    // Use esp_* functions to avoid deprecation warnings
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_setservername(1, "time.nist.gov");
     esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
     esp_sntp_init();
+    sntp_initialized = true;
     
-    // Wait for time to be set
     time_t now = 0;
     int retry = 0;
     const int max_retry = 20;
@@ -148,7 +161,6 @@ bool mqtt_manager_sync_time(void)
         return false;
     }
     
-    // Wait for semaphore or timeout
     if (xSemaphoreTake(time_sync_semaphore, pdMS_TO_TICKS(5000)) != pdTRUE) {
         ESP_LOGW(TAG, "Time sync notification timeout");
     }
@@ -172,6 +184,84 @@ time_t mqtt_manager_get_current_time(void)
 }
 
 /*===============================================================================
+  MQTT Client Management
+  ===============================================================================*/
+
+static void mqtt_destroy_client(void)
+{
+    if (mqtt_client) {
+        ESP_LOGI(TAG, "Destroying MQTT client");
+        esp_mqtt_client_stop(mqtt_client);
+        esp_mqtt_client_destroy(mqtt_client);
+        mqtt_client = NULL;
+    }
+    current_status = MQTT_DISCONNECTED;
+}
+
+static bool mqtt_create_client(void)
+{
+    // Destroy existing client if any
+    if (mqtt_client) {
+        mqtt_destroy_client();
+    }
+    
+    ESP_LOGI(TAG, "Creating new MQTT client");
+    
+    char client_id[64];
+    uint32_t random_suffix = esp_random() & 0xFFFF;
+    snprintf(client_id, sizeof(client_id), "%s_%04" PRIX32, CONFIG_THING_NAME, random_suffix);
+    
+    esp_mqtt_client_config_t mqtt_cfg = {
+        .broker = {
+            .address = {
+                .uri = "mqtts://" CONFIG_AWS_IOT_ENDPOINT ":8883",
+            },
+            .verification = {
+                .certificate = aws_cert_ca,
+                .skip_cert_common_name_check = false,
+                .use_global_ca_store = false,
+            },
+        },
+        .credentials = {
+            .client_id = client_id,
+            .authentication = {
+                .certificate = aws_cert_crt,
+                .key = aws_cert_private,
+            },
+        },
+        .session = {
+            .keepalive = 15,
+            .disable_clean_session = false,
+            .last_will = {
+                .topic = TOPIC_LWT,
+                .msg = LWT_MESSAGE_DISCONNECTED,
+                .msg_len = 0,
+                .qos = 1,
+                .retain = true,
+            },
+        },
+        .buffer = {
+            .size = 2048,
+            .out_size = 2048,
+        },
+        .network = {
+            .timeout_ms = 10000,
+        },
+    };
+    
+    mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
+    if (!mqtt_client) {
+        ESP_LOGE(TAG, "Failed to create MQTT client");
+        return false;
+    }
+    
+    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, 
+                                   mqtt_event_handler, NULL);
+    
+    return true;
+}
+
+/*===============================================================================
   MQTT Event Handler
   ===============================================================================*/
 
@@ -186,19 +276,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             current_status = MQTT_CONNECTED;
             reconnect_attempts = 0;
             
-            // Subscribe to shadow delta
             esp_mqtt_client_subscribe(mqtt_client, TOPIC_SHADOW_DELTA, 1);
             ESP_LOGI(TAG, "Subscribed to: %s", TOPIC_SHADOW_DELTA);
             
-            // Subscribe to control topic
             esp_mqtt_client_subscribe(mqtt_client, TOPIC_CONTROL, 1);
             ESP_LOGI(TAG, "Subscribed to: %s", TOPIC_CONTROL);
             
-            // Publish connected LWT
             esp_mqtt_client_publish(mqtt_client, TOPIC_LWT,
                                     LWT_MESSAGE_CONNECTED, 0, 1, 1);
             
-            // Request shadow
             esp_mqtt_client_publish(mqtt_client, "$aws/things/" CONFIG_THING_NAME "/shadow/get",
                                     "", 0, 0, 0);
             break;
@@ -223,7 +309,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         case MQTT_EVENT_DATA:
             ESP_LOGI(TAG, "MQTT data received, topic: %.*s", event->topic_len, event->topic);
             
-            // Handle shadow delta
             if (strncmp(event->topic, TOPIC_SHADOW_DELTA, event->topic_len) == 0) {
                 cJSON *root = cJSON_ParseWithLength(event->data, event->data_len);
                 if (root) {
@@ -253,7 +338,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                     cJSON_Delete(root);
                 }
             }
-            // Handle control topic
             else if (strncmp(event->topic, TOPIC_CONTROL, event->topic_len) == 0) {
                 cJSON *root = cJSON_ParseWithLength(event->data, event->data_len);
                 if (root) {
@@ -295,7 +379,6 @@ bool mqtt_manager_init(void)
 {
     ESP_LOGI(TAG, "Initializing MQTT manager");
     
-    // Initialize shadow state
     memset(&shadow_state, 0, sizeof(shadow_state));
     shadow_state.power = false;
     shadow_state.overload_protection = true;
@@ -306,92 +389,30 @@ bool mqtt_manager_init(void)
 
 bool mqtt_manager_start(void)
 {
-    if (mqtt_client) {
-        ESP_LOGW(TAG, "MQTT already started");
-        return true;
-    }
-    
     ESP_LOGI(TAG, "Starting MQTT manager");
     
-    // Verify certificates before proceeding
     verify_certificates();
     
-    // Sync time first
-    if (!mqtt_manager_sync_time()) {
-        ESP_LOGW(TAG, "Time sync failed, continuing anyway");
+    if (!sntp_initialized) {
+        if (!mqtt_manager_sync_time()) {
+            ESP_LOGW(TAG, "Time sync failed, continuing anyway");
+        }
+    } else {
+        ESP_LOGI(TAG, "SNTP already initialized, skipping time sync");
     }
     
-    // Generate client ID with random suffix
-    char client_id[64];
-    uint32_t random_suffix = esp_random() & 0xFFFF;
-    snprintf(client_id, sizeof(client_id), "%s_%04" PRIX32, CONFIG_THING_NAME, random_suffix);
-    
-    // CORRECT CONFIGURATION FOR ESP-IDF v5.5.2
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .broker = {
-            .address = {
-                .uri = "mqtts://" CONFIG_AWS_IOT_ENDPOINT ":8883",
-            },
-            .verification = {
-                .certificate = aws_cert_ca,        // CA Certificate goes here in verification
-                .skip_cert_common_name_check = false,
-                .use_global_ca_store = false,      // Don't use global store
-            },
-        },
-        .credentials = {
-            .client_id = client_id,
-            .authentication = {
-                .certificate = aws_cert_crt,        // Device certificate
-                .key = aws_cert_private,            // Private key
-            },
-        },
-        .session = {
-            .keepalive = 15,
-            .disable_clean_session = false,
-            .last_will = {
-                .topic = TOPIC_LWT,
-                .msg = LWT_MESSAGE_DISCONNECTED,
-                .msg_len = 0,
-                .qos = 1,
-                .retain = true,
-            },
-        },
-        .buffer = {
-            .size = 2048,
-            .out_size = 2048,
-        },
-        .network = {
-            .timeout_ms = 10000,
-        },
-    };
-    
-    mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
-    if (!mqtt_client) {
-        ESP_LOGE(TAG, "Failed to create MQTT client");
-        return false;
-    }
-    
-    // Register event handler
-    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, 
-                                   mqtt_event_handler, NULL);
-    
-    return true;
+    return mqtt_create_client();
 }
 
 void mqtt_manager_stop(void)
 {
-    if (mqtt_client) {
-        esp_mqtt_client_stop(mqtt_client);
-        esp_mqtt_client_destroy(mqtt_client);
-        mqtt_client = NULL;
-    }
-    current_status = MQTT_DISCONNECTED;
+    mqtt_destroy_client();
 }
 
 bool mqtt_manager_connect(void)
 {
     if (!mqtt_client) {
-        ESP_LOGE(TAG, "MQTT not initialized");
+        ESP_LOGE(TAG, "MQTT client not created");
         return false;
     }
     
@@ -400,9 +421,15 @@ bool mqtt_manager_connect(void)
         return false;
     }
     
-    // Check if already connected by checking status
+    // Check current state
     if (current_status == MQTT_CONNECTED) {
+        ESP_LOGI(TAG, "MQTT already connected");
         return true;
+    }
+    
+    if (current_status == MQTT_CONNECTING) {
+        ESP_LOGD(TAG, "MQTT already connecting");
+        return false;
     }
     
     ESP_LOGI(TAG, "Connecting to AWS IoT...");
@@ -414,9 +441,8 @@ bool mqtt_manager_connect(void)
         ESP_LOGE(TAG, "Failed to start MQTT client: %s", esp_err_to_name(err));
         current_status = MQTT_ERROR;
         
-        // Destroy and recreate client on failure
-        esp_mqtt_client_destroy(mqtt_client);
-        mqtt_client = NULL;
+        // If client start fails, destroy it so it gets recreated next time
+        mqtt_destroy_client();
         return false;
     }
     
@@ -426,12 +452,18 @@ bool mqtt_manager_connect(void)
 void mqtt_manager_disconnect(void)
 {
     if (mqtt_client && current_status == MQTT_CONNECTED) {
-        // Publish disconnected LWT
+        ESP_LOGI(TAG, "Disconnecting MQTT client...");
+        
         esp_mqtt_client_publish(mqtt_client, TOPIC_LWT,
                                 LWT_MESSAGE_DISCONNECTED, 0, 1, 1);
         vTaskDelay(pdMS_TO_TICKS(100));
         
-        esp_mqtt_client_stop(mqtt_client);
+        esp_err_t err = esp_mqtt_client_stop(mqtt_client);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to stop MQTT client: %s", esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG, "MQTT client stopped");
+        }
     }
     current_status = MQTT_DISCONNECTED;
 }
@@ -440,18 +472,55 @@ void mqtt_manager_handle(void)
 {
     uint32_t now = esp_timer_get_time() / 1000;
     
-    // Auto-reconnect logic
-    if (current_status == MQTT_DISCONNECTED || current_status == MQTT_ERROR) {
-        if (now - last_reconnect_attempt > RECONNECT_INTERVAL_MS) {
-            last_reconnect_attempt = now;
-            if (wifi_manager_is_connected()) {
-                // Recreate client if it was destroyed
-                if (!mqtt_client) {
-                    mqtt_manager_start();
+    // Don't auto-reconnect in setup mode
+    if (wifi_manager_is_setup_mode()) {
+        return;
+    }
+    
+    // Reset reconnect attempts if WiFi is not connected
+    if (!wifi_manager_is_connected()) {
+        reconnect_attempts = 0;
+        return;
+    }
+    
+    // Handle different states
+    switch (current_status) {
+        case MQTT_DISCONNECTED:
+        case MQTT_ERROR:
+            // Try to reconnect
+            if (now - last_reconnect_attempt > RECONNECT_INTERVAL_MS) {
+                last_reconnect_attempt = now;
+                
+                if (reconnect_attempts < MAX_RECONNECT_ATTEMPTS) {
+                    ESP_LOGI(TAG, "Attempting MQTT reconnection (attempt %lu/%d)", 
+                             reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
+                    
+                    // Recreate client if it doesn't exist
+                    if (!mqtt_client) {
+                        ESP_LOGI(TAG, "Creating new MQTT client");
+                        mqtt_create_client();
+                    }
+                    
+                    if (mqtt_client) {
+                        mqtt_manager_connect();
+                    }
+                } else {
+                    // Too many attempts, reset the client completely
+                    ESP_LOGW(TAG, "Max reconnection attempts reached, resetting client");
+                    mqtt_destroy_client();
+                    reconnect_attempts = 0;
                 }
-                mqtt_manager_connect();
             }
-        }
+            break;
+            
+        case MQTT_CONNECTING:
+            // Already connecting, just wait
+            break;
+            
+        case MQTT_CONNECTED:
+            // All good, reset reconnect attempts
+            reconnect_attempts = 0;
+            break;
     }
 }
 
@@ -491,7 +560,6 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
         return false;
     }
     
-    // Update shadow state
     shadow_state.voltage_reading = voltage;
     shadow_state.current_reading = current;
     shadow_state.power_reading = power;
@@ -503,12 +571,10 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
         shadow_state.last_wake_up_time = time(NULL);
     }
     
-    // Build shadow update JSON 
     cJSON *root = cJSON_CreateObject();
     cJSON *state = cJSON_AddObjectToObject(root, "state");
     cJSON *reported = cJSON_AddObjectToObject(state, "reported");
     
-    // Device details
     cJSON_AddStringToObject(reported, "welcome", "aws-iot");
     
     cJSON *device_details = cJSON_AddObjectToObject(reported, "device_details");
@@ -516,11 +582,9 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
     cJSON_AddStringToObject(device_details, "local_ip", wifi_manager_get_ip());
     cJSON_AddStringToObject(device_details, "wifi_ssid", wifi_manager_get_ssid());
     
-    // OTA
     cJSON *ota = cJSON_AddObjectToObject(reported, "ota");
     cJSON_AddStringToObject(ota, "fw_version", CONFIG_FIRMWARE_VERSION);
     
-    // Device diagnosis
     cJSON *diagnosis = cJSON_AddObjectToObject(reported, "device_diagnosis");
     cJSON_AddStringToObject(diagnosis, "network", "WiFi");
     cJSON_AddNumberToObject(diagnosis, "connection_attempt", reconnect_attempts);
@@ -538,13 +602,11 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
         }
     }
     
-    // Device status
     cJSON *status = cJSON_AddObjectToObject(reported, "device_status");
     cJSON_AddStringToObject(status, "connected", 
                            wifi_manager_is_connected() ? "true" : "false");
     cJSON_AddNumberToObject(status, "rssi", wifi_manager_get_rssi());
     
-    // Meter details
     cJSON *meter = cJSON_AddObjectToObject(reported, "meter_details");
     cJSON_AddNumberToObject(meter, "current_reading", current);
     cJSON_AddNumberToObject(meter, "power_reading", power);
@@ -552,10 +614,8 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
     cJSON_AddNumberToObject(meter, "voltage_reading", voltage);
     cJSON_AddNumberToObject(meter, "temperature", temp);
     
-    // Relay status
     cJSON_AddStringToObject(reported, "relay_status", relay_state ? "true" : "false");
     
-    // Desired section
     cJSON *desired = cJSON_AddObjectToObject(state, "desired");
     cJSON_AddStringToObject(desired, "welcome", "aws-iot");
     cJSON_AddStringToObject(desired, "relay_status", relay_state ? "true" : "false");
