@@ -139,18 +139,29 @@ static void url_decode(char *dst, const char *src)
     *dst++ = '\0';
 }
 
-/* HTTP Handlers */
+/* HTTP Handlers - With socket error handling */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Serving root page");
     
     size_t html_len = index_html_end - index_html_start;
     
+    // Check if client is still connected
+    int sock = httpd_req_to_sockfd(req);
+    if (sock < 0) {
+        ESP_LOGW(TAG, "Client disconnected before response");
+        return ESP_FAIL;
+    }
+    
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, (const char *)index_html_start, html_len);
     
-    return ESP_OK;
+    esp_err_t ret = httpd_resp_send(req, (const char *)index_html_start, html_len);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send response: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
 }
 
 static esp_err_t scan_get_handler(httpd_req_t *req)
@@ -159,12 +170,6 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
     
     wifi_mode_t mode;
     esp_wifi_get_mode(&mode);
-    
-    // Store original mode to restore if needed
-    wifi_mode_t original_mode = mode;
-    
-    // If in AP-only mode, we can still scan in APSTA mode
-    // The WiFi hardware supports scanning while in AP mode on ESP32
     
     // Configure scan for better results
     wifi_scan_config_t scan_config = {
@@ -206,7 +211,6 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
     for (int i = 0; i < ap_count; i++) {
         if (i > 0) fprintf(stream, ",");
         
-        // JSON escape SSID
         fprintf(stream, "{\"ssid\":\"");
         for (int j = 0; ap_records[i].ssid[j]; j++) {
             if (ap_records[i].ssid[j] == '"' || ap_records[i].ssid[j] == '\\') {
@@ -222,11 +226,23 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
     
     if (ap_records) free(ap_records);
     
+    // Check if client is still connected
+    int sock = httpd_req_to_sockfd(req);
+    if (sock < 0) {
+        ESP_LOGW(TAG, "Client disconnected before scan response");
+        if (response) free(response);
+        return ESP_FAIL;
+    }
+    
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, response, response_len);
+    esp_err_t ret = httpd_resp_send(req, response, response_len);
     free(response);
     
-    return ESP_OK;
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send scan response: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
 }
 
 static esp_err_t connect_post_handler(httpd_req_t *req)
@@ -440,6 +456,8 @@ void captive_portal_start(void)
     // Start HTTP server
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
+    config.lru_purge_enable = true;  // Enable LRU purging for stale connections
+    config.max_open_sockets = 7;      // Increase max sockets
     
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &root);
