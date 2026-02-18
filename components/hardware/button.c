@@ -13,15 +13,15 @@ static button_callback_t user_callback = NULL;
 static TaskHandle_t button_task_handle = NULL;
 
 // Debounce and timing constants 
-#define DEBOUNCE_DELAY_MS    50
-#define SHORT_PRESS_MAX_MS   1000
-#define LONG_PRESS_MS        4000
-#define VERY_LONG_PRESS_MS   7000
-#define RESET_HOLD_MS        10000
-#define PRESS_COOLDOWN_MS    500
+#define DEBOUNCE_DELAY_MS        50
+#define SHORT_PRESS_MAX_MS       1000
+#define LONG_PRESS_MS            4000
+#define VERY_LONG_PRESS_MS       7000
+#define WIFI_RESET_HOLD_MS       15000
+#define PRESS_COOLDOWN_MS        500
 
 // Button state machine
-static struct {
+typedef struct {
     bool current_state;
     bool last_state;
     bool stable_state;
@@ -29,9 +29,12 @@ static struct {
     uint32_t press_start_time;
     uint32_t last_valid_press_time;
     bool press_active;
-    button_event_t pending_event;
-    uint32_t pending_param;
-} btn = {0};
+    bool reset_reported;
+    bool very_long_reported;
+    bool long_reported;
+} button_state_t;
+
+static button_state_t btn = {0};
 
 void button_init(int gpio_pin, button_callback_t callback)
 {
@@ -41,7 +44,7 @@ void button_init(int gpio_pin, button_callback_t callback)
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << button_gpio),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,  // External pull-up or internal
+        .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
@@ -53,7 +56,9 @@ void button_init(int gpio_pin, button_callback_t callback)
     btn.stable_state = btn.current_state;
     btn.last_debounce_time = esp_timer_get_time() / 1000;
     btn.press_active = false;
-    btn.pending_event = BUTTON_EVENT_NONE;
+    btn.reset_reported = false;
+    btn.very_long_reported = false;
+    btn.long_reported = false;
     
     ESP_LOGI(TAG, "Button initialized on GPIO %d", button_gpio);
 }
@@ -61,7 +66,7 @@ void button_init(int gpio_pin, button_callback_t callback)
 bool button_is_pressed(void)
 {
     if (button_gpio < 0) return false;
-    return (gpio_get_level(button_gpio) == 0); // Active low
+    return (gpio_get_level(button_gpio) == 0);
 }
 
 static void process_button_event(button_event_t event, uint32_t param)
@@ -99,6 +104,11 @@ void button_task_handler(void)
                     uint32_t press_duration = now - btn.press_start_time;
                     btn.press_active = false;
                     
+                    // Reset reporting flags on release
+                    btn.reset_reported = false;
+                    btn.very_long_reported = false;
+                    btn.long_reported = false;
+                    
                     // Check if this is a valid press (not too short, not within cooldown)
                     if (press_duration > 50 && 
                         (now - btn.last_valid_press_time) > PRESS_COOLDOWN_MS) {
@@ -121,38 +131,26 @@ void button_task_handler(void)
     if (btn.press_active) {
         uint32_t hold_duration = now - btn.press_start_time;
         
-        // Check thresholds in order
-        if (hold_duration >= RESET_HOLD_MS) {
-            static bool reset_reported = false;
-            if (!reset_reported) {
-                ESP_LOGW(TAG, "10 second hold detected - RESET");
-                process_button_event(BUTTON_EVENT_HOLD_10S, hold_duration);
-                reset_reported = true;
+        // Check thresholds in order (highest first)
+        if (hold_duration >= WIFI_RESET_HOLD_MS) {
+            if (!btn.reset_reported) {
+                ESP_LOGW(TAG, "%lu second hold detected - WiFi reset mode", WIFI_RESET_HOLD_MS/1000);
+                process_button_event(BUTTON_EVENT_WIFI_RESET, hold_duration);
+                btn.reset_reported = true;
             }
         } else if (hold_duration >= VERY_LONG_PRESS_MS) {
-            static bool very_long_reported = false;
-            if (!very_long_reported) {
-                ESP_LOGI(TAG, "7 second hold detected");
+            if (!btn.very_long_reported) {
+                ESP_LOGI(TAG, "7 second hold detected - rapid blink");
                 process_button_event(BUTTON_EVENT_VERY_LONG_PRESS, hold_duration);
-                very_long_reported = true;
+                btn.very_long_reported = true;
             }
         } else if (hold_duration >= LONG_PRESS_MS) {
-            static bool long_reported = false;
-            if (!long_reported) {
-                ESP_LOGI(TAG, "4 second hold detected");
+            if (!btn.long_reported) {
+                ESP_LOGI(TAG, "4 second hold detected - fast blink");
                 process_button_event(BUTTON_EVENT_LONG_PRESS, hold_duration);
-                long_reported = true;
+                btn.long_reported = true;
             }
         }
-    } else {
-        // Reset reporting flags when button released
-        static bool reset_reported = false;
-        static bool very_long_reported = false;
-        static bool long_reported = false;
-        
-        reset_reported = false;
-        very_long_reported = false;
-        long_reported = false;
     }
     
     btn.last_state = btn.current_state;
@@ -172,8 +170,7 @@ static void button_task(void *pvParameters)
 void button_task_start(void)
 {
     if (button_task_handle == NULL) {
-        // INCREASED STACK SIZE FROM 2048 TO 4096
         xTaskCreate(button_task, "button_task", 4096, NULL, 6, &button_task_handle);
-        ESP_LOGI(TAG, "Button task started with 4096 stack size");
+        ESP_LOGI(TAG, "Button task started");
     }
 }
