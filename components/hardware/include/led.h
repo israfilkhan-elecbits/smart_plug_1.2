@@ -15,9 +15,9 @@ extern "C" {
 typedef enum {
     LED_MODE_OFF,           // LED always off
     LED_MODE_ON,            // LED always on
-    LED_MODE_BLINK_SLOW,    // Slow blinking (500ms)
-    LED_MODE_BLINK_FAST,    // Fast blinking (200ms)
-    LED_MODE_BLINK_RAPID,   // Rapid blinking (100ms)
+    LED_MODE_BLINK_SLOW,    // Slow blinking (500ms) - Setup mode
+    LED_MODE_BLINK_FAST,    // Fast blinking (200ms) - 4s hold
+    LED_MODE_BLINK_RAPID,   // Rapid blinking (100ms) - 7s hold
     LED_MODE_BLINK_PATTERN, // Custom pattern for reset indication
 } led_mode_t;
 
