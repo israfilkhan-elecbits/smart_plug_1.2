@@ -14,10 +14,10 @@ extern "C" {
  */
 typedef enum {
     BUTTON_EVENT_NONE,
-    BUTTON_EVENT_SHORT_PRESS,    // < 1 second
-    BUTTON_EVENT_LONG_PRESS,      // 4 seconds
-    BUTTON_EVENT_VERY_LONG_PRESS, // 7 seconds
-    BUTTON_EVENT_HOLD_10S,        // 10 seconds (reset)
+    BUTTON_EVENT_SHORT_PRESS,        // < 1 second
+    BUTTON_EVENT_LONG_PRESS,          // 4 seconds (LED fast blink)
+    BUTTON_EVENT_VERY_LONG_PRESS,     // 7 seconds (LED rapid blink)
+    BUTTON_EVENT_WIFI_RESET,          // 15+ seconds (clear WiFi credentials)
     BUTTON_EVENT_RELEASED,
 } button_event_t;
 
