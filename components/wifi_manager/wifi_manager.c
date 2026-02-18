@@ -7,6 +7,7 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include <string.h>
@@ -235,7 +236,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 {
     static int retry_count = 0;
     
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "WiFi STA started");
+        if (strlen(saved_ssid) > 0) {
+            esp_wifi_connect();
+        }
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (current_status == WIFI_STATUS_CONNECTED) {
             ESP_LOGI(TAG, "WiFi disconnected");
             current_status = WIFI_STATUS_DISCONNECTED;
@@ -250,6 +257,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             } else {
                 xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
                 retry_count = 0;
+                ESP_LOGW(TAG, "Max retries reached, will try again in background");
             }
         }
     }
@@ -265,7 +273,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         
         if (led_callback) led_callback(true);
         
-        // Get RSSI
         wifi_ap_record_t ap_info;
         if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
             current_rssi = ap_info.rssi;
@@ -274,6 +281,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP started");
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *)event_data;
+        ESP_LOGI(TAG, "Station connected to AP");
+        ESP_LOGI(TAG, "  MAC: " MACSTR, MAC2STR(event->mac));
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
+        ESP_LOGI(TAG, "Station disconnected from AP");
+        ESP_LOGI(TAG, "  MAC: " MACSTR, MAC2STR(event->mac));
+        // Just log it - no special handling needed
     }
 }
 
@@ -320,7 +338,10 @@ void wifi_manager_disconnect(void)
 
 void wifi_manager_start_captive_portal(void)
 {
-    if (setup_mode) return;
+    if (setup_mode) {
+        ESP_LOGW(TAG, "Already in setup mode");
+        return;
+    }
     
     ESP_LOGI(TAG, "Starting captive portal");
     setup_mode = true;
@@ -344,10 +365,20 @@ void wifi_manager_stop_captive_portal(void)
     if (!setup_mode) return;
     
     ESP_LOGI(TAG, "Stopping captive portal");
+    
+    // Stop captive portal first
+    captive_portal_stop();
+    vTaskDelay(pdMS_TO_TICKS(200));  // Allow pending operations to complete
+    
+    // Then stop WiFi
+    esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
     setup_mode = false;
     
-    captive_portal_stop();
-    
+    // Set to STA mode and restart
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
     
