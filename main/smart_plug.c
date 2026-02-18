@@ -140,24 +140,6 @@ static uint32_t system_start_time = 0;
 static TaskHandle_t measurement_task_handle = NULL;
 static TaskHandle_t mqtt_task_handle = NULL;
 
-/*===============================================================================
-  Helper function to clean up old calibration data from NVS 
-  ===============================================================================*/
-
-static void cleanup_old_calibration_nvs(void)
-{
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open(NVS_NS_METER, NVS_READWRITE, &nvs);
-    if (err == ESP_OK) {
-        // Try to erase calibration key if it exists (from older firmware versions)
-        err = nvs_erase_key(nvs, "calibration");
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Removed old calibration data from NVS");
-            nvs_commit(nvs);
-        }
-        nvs_close(nvs);
-    }
-}
 
 /*===============================================================================
   NVS Storage Functions 
@@ -1017,9 +999,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "NVS initialized");
-    
-    // Clean up any old calibration data from previous firmware versions
-    cleanup_old_calibration_nvs();
     
     system_start_time = esp_timer_get_time() / 1000;
     
