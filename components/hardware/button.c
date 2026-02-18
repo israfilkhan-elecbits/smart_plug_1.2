@@ -146,12 +146,10 @@ void button_task_handler(void)
         }
     } else {
         // Reset reporting flags when button released
-        // These are static so they persist across function calls
         static bool reset_reported = false;
         static bool very_long_reported = false;
         static bool long_reported = false;
         
-        // Reset all flags
         reset_reported = false;
         very_long_reported = false;
         long_reported = false;
@@ -174,7 +172,8 @@ static void button_task(void *pvParameters)
 void button_task_start(void)
 {
     if (button_task_handle == NULL) {
-        xTaskCreate(button_task, "button_task", 2048, NULL, 6, &button_task_handle);
-        ESP_LOGI(TAG, "Button task started");
+        // INCREASED STACK SIZE FROM 2048 TO 4096
+        xTaskCreate(button_task, "button_task", 4096, NULL, 6, &button_task_handle);
+        ESP_LOGI(TAG, "Button task started with 4096 stack size");
     }
 }

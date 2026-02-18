@@ -25,7 +25,7 @@ void relay_init(int gpio_pin, bool initial_state)
     gpio_config(&io_conf);
     
     gpio_set_level(relay_gpio, current_state ? 1 : 0);
-    ESP_LOGI(TAG, "Relay initialized on GPIO %d, state: %s", 
+    ESP_LOGI(TAG, "Relay initialized on GPIO %d, initial state: %s", 
              relay_gpio, current_state ? "ON" : "OFF");
 }
 
@@ -39,16 +39,21 @@ void relay_set(bool state)
     if (state != current_state) {
         current_state = state;
         gpio_set_level(relay_gpio, current_state ? 1 : 0);
-        ESP_LOGI(TAG, "Relay turned %s", current_state ? "ON" : "OFF");
+        ESP_LOGI(TAG, "Relay turned %s (current_state=%d)", 
+                 current_state ? "ON" : "OFF", current_state);
+    } else {
+        ESP_LOGD(TAG, "Relay already %s, no change", state ? "ON" : "OFF");
     }
 }
 
 bool relay_get_state(void)
 {
+    ESP_LOGD(TAG, "relay_get_state() returning: %d", current_state);
     return current_state;
 }
 
 void relay_toggle(void)
 {
+    ESP_LOGI(TAG, "Toggling relay from %s", current_state ? "ON" : "OFF");
     relay_set(!current_state);
 }

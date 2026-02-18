@@ -121,7 +121,7 @@ typedef struct {
 
 static ade9153a_t ade_dev;
 static measurements_t meas;
-static calibration_t cal = DEFAULT_CALIBRATION;
+static calibration_t cal = DEFAULT_CALIBRATION;  // Always use defaults, never saved to NVS
 static raw_measurements_t *raw_buffer = NULL;
 static uint8_t buffer_index = 0;
 static bool buffer_ready = false;
@@ -141,7 +141,26 @@ static TaskHandle_t measurement_task_handle = NULL;
 static TaskHandle_t mqtt_task_handle = NULL;
 
 /*===============================================================================
-  NVS Storage Functions
+  Helper function to clean up old calibration data from NVS 
+  ===============================================================================*/
+
+static void cleanup_old_calibration_nvs(void)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NS_METER, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        // Try to erase calibration key if it exists (from older firmware versions)
+        err = nvs_erase_key(nvs, "calibration");
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Removed old calibration data from NVS");
+            nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+}
+
+/*===============================================================================
+  NVS Storage Functions 
   ===============================================================================*/
 
 static void save_energy_to_nvs(void)
@@ -168,18 +187,12 @@ static void save_energy_to_nvs(void)
         return;
     }
     
-    // Save calibration values
-    err = nvs_set_blob(nvs, "calibration", &cal, sizeof(calibration_t));
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to save calibration: %s", esp_err_to_name(err));
-    }
-    
     err = nvs_commit(nvs);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(err));
     } else {
-        ESP_LOGI(TAG, "Saved to NVS: energy=%.3f Wh, relay=%s",
-                 cumulative_energy, relay_state ? "ON" : "OFF");
+        ESP_LOGI(TAG, "SAVED to NVS: energy=%.3f Wh, relay=%s (value=%d)",
+                 cumulative_energy, relay_state ? "ON" : "OFF", relay_state);
     }
     
     nvs_close(nvs);
@@ -204,25 +217,16 @@ static void load_energy_from_nvs(void)
     uint8_t relay_state = 0;
     err = nvs_get_u8(nvs, "relay_state", &relay_state);
     if (err == ESP_OK) {
+        ESP_LOGI(TAG, "NVS read: relay_state=%d (saved value)", relay_state);
         relay_set(relay_state != 0);
         ESP_LOGI(TAG, "Loaded relay state: %s", relay_state ? "ON" : "OFF");
-    }
-    
-    // Load calibration values
-    len = sizeof(calibration_t);
-    err = nvs_get_blob(nvs, "calibration", &cal, &len);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "No calibration found, using defaults");
-        cal = DEFAULT_CALIBRATION;
+    } else {
+        ESP_LOGI(TAG, "No relay_state found in NVS, keeping default");
     }
     
     nvs_close(nvs);
     
     ESP_LOGI(TAG, "Loaded from NVS: energy=%.3f Wh", cumulative_energy);
-    ESP_LOGI(TAG, "Calibration: V=%.6f I=%.6f P=%.6f E=%.6f Offset=%.3f",
-             cal.voltage_coefficient, cal.current_coefficient,
-             cal.power_coefficient, cal.energy_coefficient,
-             cal.current_offset);
 }
 
 static void save_offline_data(void)
@@ -250,7 +254,7 @@ static void save_offline_data(void)
 }
 
 /*===============================================================================
-  ADE9153A Functions - Updated to match Analog Devices implementation
+  ADE9153A Functions 
   ===============================================================================*/
 
 static void print_spi_debug(uint8_t *tx_data, int tx_len, uint8_t *rx_data, int rx_len)
@@ -705,6 +709,31 @@ static void print_measurements(void)
 }
 
 /*===============================================================================
+  Reset Task - Separate task for handling device reset
+  ===============================================================================*/
+
+static void reset_device_task(void *pvParameters)
+{
+    ESP_LOGI(TAG, "Reset task started - removing WiFi credentials and restarting");
+    
+    // Small delay to let button task complete
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Remove credentials from NVS
+    ESP_LOGI(TAG, "Removing WiFi credentials now (10s hold reached)");
+    wifi_manager_reset_credentials();
+    
+    // Wait for NVS write to complete
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ESP_LOGI(TAG, "Restarting now...");
+    esp_restart();
+    
+    // Should never reach here
+    vTaskDelete(NULL);
+}
+
+/*===============================================================================
   Button Callback
   ===============================================================================*/
 
@@ -719,6 +748,10 @@ static void button_event_handler(button_event_t event, uint32_t param)
                 last_valid_press = now;
                 ESP_LOGI(TAG, "Button short press - toggling relay");
                 relay_toggle();
+                
+                // FORCE SAVE IMMEDIATELY
+                ESP_LOGI(TAG, "Forcing immediate NVS save after button press");
+                save_energy_to_nvs();
                 
                 // Update shadow if connected
                 if (wifi_manager_is_connected() && mqtt_manager_is_connected()) {
@@ -740,25 +773,26 @@ static void button_event_handler(button_event_t event, uint32_t param)
             break;
             
         case BUTTON_EVENT_HOLD_10S:
-            ESP_LOGW(TAG, "Button hold 10s - resetting WiFi credentials");
+            ESP_LOGW(TAG, "Button hold 10s - initiating reset sequence");
             led_set_mode(LED_MODE_BLINK_PATTERN);
+            
+            // Create a separate task for reset to avoid stack overflow
+            xTaskCreate(reset_device_task, "reset_task", 4096, NULL, 10, NULL);
             break;
             
         case BUTTON_EVENT_RELEASED:
-            if (param >= 10000) {
-                ESP_LOGI(TAG, "Reset confirmed - erasing credentials and restarting");
-                wifi_manager_reset_credentials();
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                esp_restart();
+            // Only handle normal releases (less than 10s)
+            if (param < 10000) {
+                // Reset LED based on mode
+                if (wifi_manager_is_setup_mode()) {
+                    led_set_mode(LED_MODE_BLINK_SLOW);
+                } else if (wifi_manager_is_connected()) {
+                    led_set_mode(LED_MODE_ON);
+                } else {
+                    led_set_mode(LED_MODE_OFF);
+                }
             }
-            // Reset LED based on mode
-            if (wifi_manager_is_setup_mode()) {
-                led_set_mode(LED_MODE_BLINK_SLOW);
-            } else if (wifi_manager_is_connected()) {
-                led_set_mode(LED_MODE_ON);
-            } else {
-                led_set_mode(LED_MODE_OFF);
-            }
+            // If param >= 10000, we already handled it in HOLD_10S, so do nothing here
             break;
             
         default:
@@ -783,6 +817,10 @@ static void mqtt_relay_callback(bool state)
     
     ESP_LOGI(TAG, "MQTT relay command: %s", state ? "ON" : "OFF");
     relay_set(state);
+    
+    // FORCE SAVE IMMEDIATELY
+    ESP_LOGI(TAG, "Forcing immediate NVS save after MQTT command");
+    save_energy_to_nvs();
     
     // Update shadow immediately
     if (mqtt_manager_is_connected()) {
@@ -980,21 +1018,28 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "NVS initialized");
     
+    // Clean up any old calibration data from previous firmware versions
+    cleanup_old_calibration_nvs();
+    
     system_start_time = esp_timer_get_time() / 1000;
+    
+    // Initialize LED and button first
+    led_init(PIN_LED);
+    button_init(PIN_BUTTON, button_event_handler);
+    
+    // Load saved energy and relay state FIRST
+    ESP_LOGI(TAG, "Loading saved state from NVS...");
+    load_energy_from_nvs();
+    
+    // THEN initialize relay (without overwriting the loaded state)
+    // relay_init will use the state we just loaded via relay_set in load_energy_from_nvs
+    relay_init(PIN_RELAY, relay_get_state());
     
     // Display calibration values
     ESP_LOGI(TAG, "Calibration: V=%.6f I=%.6f P=%.6f E=%.6f Offset=%.3f",
              cal.voltage_coefficient, cal.current_coefficient,
              cal.power_coefficient, cal.energy_coefficient,
              cal.current_offset);
-    
-    // Initialize hardware
-    relay_init(PIN_RELAY, false);
-    led_init(PIN_LED);
-    button_init(PIN_BUTTON, button_event_handler);
-    
-    // Load saved energy and calibration
-    load_energy_from_nvs();
     
     // Check if just completed setup
     nvs_handle_t nvs;
@@ -1090,5 +1135,6 @@ void app_main(void)
     
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
     ESP_LOGI(TAG, "System ready - Uptime: %lu ms", system_start_time);
+    ESP_LOGI(TAG, "Relay final state after boot: %s", relay_get_state() ? "ON" : "OFF");
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
 }
