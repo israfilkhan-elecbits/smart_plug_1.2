@@ -9,7 +9,7 @@
 
 static const char *TAG = "ZC";
 
-// Static variables for ISR and task communication - matches Arduino volatile variables
+// Static variables for ISR and task communication
 static volatile bool zc_detected = false;
 static volatile uint32_t last_zc_time = 0;
 static volatile uint32_t last_zc_period = 0;
@@ -17,13 +17,13 @@ static volatile uint32_t zc_counter = 0;
 static int zc_gpio = -1;
 static SemaphoreHandle_t zc_semaphore = NULL;
 
-// ISR - must be in IRAM - matches Arduino IRAM_ATTR zeroCrossingISR()
+// ISR - must be in IRAM 
 static void IRAM_ATTR zero_crossing_isr(void *arg)
 {
     uint32_t now = (uint32_t)esp_timer_get_time();
     BaseType_t wake = pdFALSE;
     
-    // Calculate period between zero crossings - exactly like Arduino
+    // Calculate period between zero crossings 
     if (last_zc_time > 0) {
         last_zc_period = now - last_zc_time;
     }
@@ -51,7 +51,7 @@ void zero_crossing_init(int gpio_pin)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE  // Rising edge interrupt - matches Arduino RISING
+        .intr_type = GPIO_INTR_POSEDGE  // Rising edge interrupt 
     };
     gpio_config(&io_conf);
     
@@ -75,7 +75,7 @@ void zero_crossing_start(void)
         isr_service_installed = true;
     }
     
-    // Add ISR handler - matches attachInterrupt()
+    // Add ISR handler 
     gpio_isr_handler_add(zc_gpio, zero_crossing_isr, NULL);
     
     // Reset state
