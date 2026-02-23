@@ -998,7 +998,9 @@ void app_main(void)
         led_set_mode(LED_MODE_BLINK_SLOW);
     }
     
+    // Initialize MQTT manager 
     mqtt_manager_init();
+    
     mqtt_manager_set_relay_callback(mqtt_relay_callback);
     mqtt_manager_set_energy_reset_callback(mqtt_energy_reset_callback);
     mqtt_manager_set_shadow_update_callback(mqtt_shadow_callback);
@@ -1038,6 +1040,16 @@ void app_main(void)
     
     xTaskCreate(measurement_task, "measure", 4096, NULL, 5, &measurement_task_handle);
     xTaskCreate(mqtt_task, "mqtt", 8192, NULL, 4, &mqtt_task_handle);
+    
+    // Set boot time after MQTT manager is initialized
+    time_t now = time(NULL);
+    if (now > 1000000000) {
+        // Calculate boot time based on current time minus uptime
+        uint32_t uptime_ms = esp_timer_get_time() / 1000;
+        mqtt_manager_set_boot_time(now - (uptime_ms / 1000));
+        ESP_LOGI(TAG, "Boot time set to: %ld (epoch), uptime: %lu seconds", 
+                 mqtt_manager_get_boot_time(), uptime_ms / 1000);
+    }
     
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
     ESP_LOGI(TAG, "System ready - Uptime: %lu ms", system_start_time);

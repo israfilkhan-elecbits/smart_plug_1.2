@@ -1,7 +1,7 @@
 # smart_plug/CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
 
-# Set project name FIRST
+# Set project 
 set(EXTRA_COMPONENT_DIRS 
     components/ade9153a
     components/hardware

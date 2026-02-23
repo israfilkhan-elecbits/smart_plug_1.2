@@ -74,6 +74,10 @@ static uint32_t last_reconnect_attempt = 0;
 #define LWT_MESSAGE_DISCONNECTED "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"false\"}}}}"
 #define LWT_MESSAGE_CONNECTED    "{\"state\":{\"reported\":{\"device_status\":{\"connected\":\"true\"}}}}"
 
+// Boot time tracking
+static time_t boot_timestamp = 0;  // When the device booted (epoch time)
+static uint32_t boot_time_ms = 0;  // When the device booted (milliseconds since boot)
+
 /*===============================================================================
   Forward Declarations
   ===============================================================================*/
@@ -109,6 +113,32 @@ static void verify_certificates(void)
     } else {
         ESP_LOGE(TAG, "Private Key format: INVALID");
     }
+}
+
+/*===============================================================================
+  Boot Time Tracking
+  ===============================================================================*/
+
+void mqtt_manager_set_boot_time(time_t boot_epoch)
+{
+    boot_timestamp = boot_epoch;
+    boot_time_ms = esp_timer_get_time() / 1000;
+    ESP_LOGI(TAG, "Boot timestamp set: %ld (epoch), boot_ms: %lu", boot_timestamp, boot_time_ms);
+}
+
+time_t mqtt_manager_get_boot_time(void)
+{
+    return boot_timestamp;
+}
+
+uint32_t mqtt_manager_get_uptime_seconds(void)
+{
+    if (boot_time_ms == 0) {
+        return 0;
+    }
+    
+    uint32_t now_ms = esp_timer_get_time() / 1000;
+    return (now_ms - boot_time_ms) / 1000;
 }
 
 /*===============================================================================
@@ -170,6 +200,14 @@ bool mqtt_manager_sync_time(void)
     ESP_LOGI(TAG, "Time synchronized: %s", asctime(&timeinfo));
     
     last_time_sync = now;
+    
+    // Set boot timestamp if not already set
+    if (boot_timestamp == 0) {
+        // Calculate approximate boot time based on uptime
+        uint32_t uptime_sec = mqtt_manager_get_uptime_seconds();
+        mqtt_manager_set_boot_time(now - uptime_sec);
+    }
+    
     return true;
 }
 
@@ -384,6 +422,10 @@ bool mqtt_manager_init(void)
     shadow_state.overload_protection = true;
     shadow_state.energy_monitoring = true;
     
+    // Record boot time in milliseconds since boot
+    boot_time_ms = esp_timer_get_time() / 1000;
+    ESP_LOGI(TAG, "Boot time recorded: %lu ms since boot", boot_time_ms);
+    
     return true;
 }
 
@@ -587,32 +629,50 @@ bool mqtt_manager_update_shadow(float voltage, float current, float power,
     
     cJSON *diagnosis = cJSON_AddObjectToObject(reported, "device_diagnosis");
     cJSON_AddStringToObject(diagnosis, "network", "WiFi");
-    cJSON_AddNumberToObject(diagnosis, "connection_attempt", reconnect_attempts);
+    
+    // Use uint32_t for connection_attempt to avoid format issues
+    char conn_attempt_str[16];
+    snprintf(conn_attempt_str, sizeof(conn_attempt_str), "%lu", reconnect_attempts);
+    cJSON_AddStringToObject(diagnosis, "connection_attempt", conn_attempt_str);
     
     time_t now = time(NULL);
     if (now > 0) {
         cJSON_AddNumberToObject(diagnosis, "timestamp", now);
-        
-        if (shadow_state.last_reset_timestamp > 0) {
-            int last_reset = now - shadow_state.last_reset_timestamp;
-            if (last_reset < 0) last_reset = 0;
-            cJSON_AddNumberToObject(diagnosis, "last_reset", last_reset);
-        } else {
-            cJSON_AddNumberToObject(diagnosis, "last_reset", 0);
-        }
+    } else {
+        // Time not synced, use uptime as timestamp fallback
+        cJSON_AddNumberToObject(diagnosis, "timestamp", esp_timer_get_time() / 1000000);
     }
+    
+    // Calculate device uptime in seconds (time since last power cycle/reboot)
+    uint32_t uptime_seconds = mqtt_manager_get_uptime_seconds();
+    cJSON_AddNumberToObject(diagnosis, "last_reset", uptime_seconds);
     
     cJSON *status = cJSON_AddObjectToObject(reported, "device_status");
     cJSON_AddStringToObject(status, "connected", 
                            wifi_manager_is_connected() ? "true" : "false");
-    cJSON_AddNumberToObject(status, "rssi", wifi_manager_get_rssi());
+    
+    char rssi_str[16];
+    snprintf(rssi_str, sizeof(rssi_str), "%d", wifi_manager_get_rssi());
+    cJSON_AddStringToObject(status, "rssi", rssi_str);
     
     cJSON *meter = cJSON_AddObjectToObject(reported, "meter_details");
-    cJSON_AddNumberToObject(meter, "current_reading", current);
-    cJSON_AddNumberToObject(meter, "power_reading", power);
-    cJSON_AddNumberToObject(meter, "energy_total", energy);
-    cJSON_AddNumberToObject(meter, "voltage_reading", voltage);
-    cJSON_AddNumberToObject(meter, "temperature", temp);
+    
+    // Convert float values to strings for JSON 
+    char str_buf[32];
+    snprintf(str_buf, sizeof(str_buf), "%.3f", current);
+    cJSON_AddStringToObject(meter, "current_reading", str_buf);
+    
+    snprintf(str_buf, sizeof(str_buf), "%.3f", power);
+    cJSON_AddStringToObject(meter, "power_reading", str_buf);
+    
+    snprintf(str_buf, sizeof(str_buf), "%.3f", energy);
+    cJSON_AddStringToObject(meter, "energy_total", str_buf);
+    
+    snprintf(str_buf, sizeof(str_buf), "%.3f", voltage);
+    cJSON_AddStringToObject(meter, "voltage_reading", str_buf);
+    
+    snprintf(str_buf, sizeof(str_buf), "%.3f", temp);
+    cJSON_AddStringToObject(meter, "temperature", str_buf);
     
     cJSON_AddStringToObject(reported, "relay_status", relay_state ? "true" : "false");
     

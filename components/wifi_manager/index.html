@@ -149,7 +149,7 @@
                 toggle.textContent = '👁️';
             }
         }
-        
+         
         function scanNetworks() {
             const select = document.getElementById('networkSelect');
             const scanBtn = document.getElementById('scanBtn');
@@ -181,10 +181,10 @@
                             
                             // Add signal strength indicator
                             let signal = '';
-                            if (network.rssi > -50) signal = '📶 Excellent';
-                            else if (network.rssi > -60) signal = '📶 Good';
-                            else if (network.rssi > -70) signal = '📶 Fair';
-                            else signal = '📶 Weak';
+                            if (network.rssi > -50) signal = 'Excellent';
+                            else if (network.rssi > -60) signal = 'Good';
+                            else if (network.rssi > -70) signal = 'Fair';
+                            else signal = 'Weak';
                             
                             option.textContent = `${network.ssid} (${signal}, ${network.rssi} dBm)`;
                             select.appendChild(option);
@@ -225,7 +225,7 @@
                 <div class="container" style="text-align:center">
                     <h2>Connecting...</h2>
                     <p>Device will restart and connect to ${escapeHtml(ssid)}</p>
-                    <div class="loading">⏳ Restarting in 3 seconds...</div>
+                    <div class="loading"> Restarting in 3 seconds...</div>
                 </div>
             `;
         }

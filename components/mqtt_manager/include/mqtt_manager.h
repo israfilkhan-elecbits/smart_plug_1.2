@@ -131,6 +131,27 @@ bool mqtt_manager_sync_time(void);
 time_t mqtt_manager_get_current_time(void);
 
 /**
+ * @brief Set boot timestamp (called after time sync)
+ * 
+ * @param boot_epoch Epoch time when device booted
+ */
+void mqtt_manager_set_boot_time(time_t boot_epoch);
+
+/**
+ * @brief Get boot timestamp
+ * 
+ * @return time_t Boot time (0 if not set)
+ */
+time_t mqtt_manager_get_boot_time(void);
+
+/**
+ * @brief Get uptime in seconds since boot
+ * 
+ * @return uint32_t Uptime in seconds
+ */
+uint32_t mqtt_manager_get_uptime_seconds(void);
+
+/**
  * @brief Set relay control callback
  * 
  * @param callback Function to call when relay command received
